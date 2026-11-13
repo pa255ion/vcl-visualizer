@@ -1113,15 +1113,17 @@ BUILD.block = function (e, c) {
   e.shape = { kind: 'box', hw: w / 2, hh: h / 2 };
   // With ports on the sides, the title sits in a band at the top and the
   // ports share the space below it, so names never run into the title.
-  const band = portList(c.in).length + portList(c.out).length > 0 && portList(c.top).length === 0;
-  let sideTop = h / 2;
+  // Top-port names take the first ~0.32 below the top edge, so the band starts under them.
+  const band = portList(c.in).length + portList(c.out).length > 0;
+  const topGap = portList(c.top).length ? 0.32 : 0.08;
+  let sideTop = h / 2 - (topGap > 0.08 ? topGap : 0);
   if (c.text) {
     const tp = e.own(new TextPlane(c.text, { size: 0.42, color: FG, weight: 700 }));
     e.track(tp.material, 'text');
     tp.mesh.position.z = 0.01;
     if (band) {
-      tp.mesh.position.y = h / 2 - 0.08 - tp.height / 2;
-      sideTop = h / 2 - 0.08 - tp.height;
+      tp.mesh.position.y = h / 2 - topGap - tp.height / 2;
+      sideTop = h / 2 - topGap - tp.height;
     }
     e.body.add(tp.mesh);
   }
@@ -1262,7 +1264,7 @@ BUILD.wave = function (e, c) {
         const V3 = (x, y) => new THREE.Vector3(x, y, 0);
         polys.push([V3(xa, ym), V3(xa + t, hi), V3(xe - t, hi), V3(xe, ym)], [V3(xa, ym), V3(xa + t, lo), V3(xe - t, lo), V3(xe, ym)]);
         if (s.v === 'x') for (let x = xa + t + 0.12; x < xe - t; x += 0.16) hatch.push([V3(x - 0.1, lo), V3(x + 0.04, hi)]);
-        if (s.label) texts.push({ text: s.label, pos: V3((xa + xe) / 2, ym, 0), align: 'center', size: h * 0.55 });
+        if (s.label) texts.push({ text: s.label, pos: V3((xa + xe) / 2, ym, 0), align: 'center', size: h * 0.55, maxW: xe - xa - 2 * t - 0.04 });
         j = k;
       }
     }
@@ -1286,6 +1288,7 @@ BUILD.wave = function (e, c) {
   for (const tx of texts) {
     const tp = e.own(new TextPlane(tx.text, { size: tx.size, color: tx.align === 'right' ? FG : '#e6edf3', align: tx.align }));
     e.track(tp.material, 'label');
+    if (tx.maxW && tp.width > tx.maxW) tp.mesh.scale.multiplyScalar(Math.max(0.4, tx.maxW / tp.width)); // shrink to fit its run
     tp.placeAt(tx.pos);
     e.obj.add(tp.mesh);
   }
