@@ -489,7 +489,7 @@ function strokeEntity(e, spec, { width = 0.06, color = FG, dash = false, fillCol
         e.body.add(fill);
       }
     }
-    if (e.label && local.label) e.label.mesh.position.copy(local.label).add(e.labelShift ?? new THREE.Vector3());
+    if (e.label && local.label) e.label.placeAt(local.label.clone().add(e.labelShift ?? new THREE.Vector3()));
     local.dots = (s.dots ?? []).map(toL);
     while (dots.length < local.dots.length) {
       const m = new THREE.Mesh(dotGeo, dotMat);
@@ -944,7 +944,7 @@ BUILD.plot = function (e, c) {
   if (!polys.length) throw new Error('nothing to draw in this range');
   strokeEntity(e, () => ({ polys, ends: [polys[0][0], polys.at(-1).at(-1)], label: polys.at(-1).at(-1), fixedOrigin: true }),
     { width: c.width ?? 0.06, color, dash: c.dash });
-  if (c.label !== undefined) { e.addLabel(c.label, new THREE.Vector3(), 'left'); e.label.mesh.position.copy(e.ends[1]).add(new THREE.Vector3(0.2, 0.2, 0)); }
+  if (c.label !== undefined) { e.addLabel(c.label, new THREE.Vector3(), 'left'); e.label.placeAt(e.ends[1].clone().add(new THREE.Vector3(0.2, 0.2, 0))); }
 };
 
 BUILD.surf = function (e, c) {
@@ -1082,10 +1082,15 @@ BUILD.wire = function (e, c) {
     const dots = [];
     if (c.dot === 'start' || c.dot === 'both') dots.push(pts[0]);
     if (c.dot === 'end' || c.dot === 'both') dots.push(pts[pts.length - 1]);
+    // Beside the segment, clear of the bus slash: above a horizontal run, right of a vertical one.
+    if (e.label) {
+      const vertical = Math.abs(b.x - a.x) < Math.abs(b.y - a.y);
+      e.labelShift = vertical ? new THREE.Vector3(0.22 + e.label.width / 2, 0, 0) : new THREE.Vector3(0, c.bus ? 0.42 : 0.3, 0);
+    }
     return { polys, ends: [pts[0], pts[pts.length - 1]], label: mid, dots, live: c.pts.some(isRef) };
   };
   const text = c.label ?? (c.bus ? String(c.bus) : undefined);
-  if (text !== undefined) { e.addLabel(text, new THREE.Vector3()); e.labelShift = new THREE.Vector3(0.12, 0.3, 0); }
+  if (text !== undefined) e.addLabel(text, new THREE.Vector3());
   strokeEntity(e, spec, { width: c.width ?? 0.04, color: c.color ?? '#8ec5ff', dash: c.dash, heads: { end: !!c.arrow } });
 };
 
@@ -1207,7 +1212,7 @@ BUILD.code = function (e, c) {
     const r = drawCode(st.text, { lang: st.lang, lines: st.lines ?? true, focus: st.focus, title: st.title });
     const n = String(st.text).split('\n').length;
     return { ...r, rowY: () => Array.from({ length: n }, (_, i) => r.firstRowPx + i * r.lineHeightPx + r.lineHeightPx / 2) };
-  }, 'text', 'L', 0.36);
+  }, 'text', 'L', 0.48);
 };
 
 BUILD.table = function (e, c) {
@@ -1216,7 +1221,7 @@ BUILD.table = function (e, c) {
     const r = drawTable(rows, { header: st.header ?? true, focus: st.focus });
     const first = (st.header ?? true) ? 1 : 0;
     return { ...r, rowY: () => rows.slice(first).map((_, i) => 2 + (i + first) * r.lineHeightPx + r.lineHeightPx / 2) };
-  }, 'rows', 'R', 0.5);
+  }, 'rows', 'R', 0.65);
 };
 
 /** Digital timing diagram (see parseWave for the pattern language). */
@@ -1281,7 +1286,7 @@ BUILD.wave = function (e, c) {
   for (const tx of texts) {
     const tp = e.own(new TextPlane(tx.text, { size: tx.size, color: tx.align === 'right' ? FG : '#e6edf3', align: tx.align }));
     e.track(tp.material, 'label');
-    tp.mesh.position.copy(tx.pos);
+    tp.placeAt(tx.pos);
     e.obj.add(tp.mesh);
   }
   // Reveal left to right.

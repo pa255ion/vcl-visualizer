@@ -197,6 +197,9 @@ const Entity = struct {
     parent: ?[]const u8, // owned by the names map (key of the parent)
     /// Pin names, comma-separated (owned; "" if none): `R1.a`, `cpu.clk`.
     ports: []const u8 = "",
+    /// Estimated board-space extent (x0, y0, x1, y1) of text, panels, blocks,
+    /// waves and nodes placed at board coordinates; null when unknown or moved.
+    box: ?[4]f64 = null,
 
     fn hasPort(e: Entity, name: []const u8) bool {
         var it = std.mem.splitScalar(u8, e.ports, ',');
@@ -515,7 +518,7 @@ const LineParser = struct {
             dur = fields.items[0].val.num;
         }
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
-        if (on == null) try p.lintBounds(fields.items);
+        const box: ?[4]f64 = if (on == null) try p.lintBounds(fields.items) else null;
         if (std.mem.eql(u8, op.name, "group")) {
             for (fields.items[0].val.list) |v| if (std.mem.eql(u8, v.id, name.?))
                 return p.fail("group: '{s}' can't contain itself", .{v.id});
@@ -530,6 +533,9 @@ const LineParser = struct {
 
         if (std.mem.eql(u8, op.name, "clear")) {
             p.scene.reset();
+        } else if (op.kind == .change and !std.mem.eql(u8, op.name, "color") and !std.mem.eql(u8, op.name, "hl")) {
+            // Moved, turned, scaled or faded: its old extent no longer holds.
+            if (p.scene.names.getPtr(fields.items[0].val.id)) |e| e.box = null;
         } else if (std.mem.eql(u8, op.name, "del")) {
             for (fields.items[0].val.list) |v| p.scene.remove(v.id);
         } else if (id) |i| {
@@ -581,6 +587,7 @@ const LineParser = struct {
             } else if (std.mem.eql(u8, op.name, "wave")) {
                 // Signals are pins under their identifier form: "FIFO write" → w.FIFO_write, d[7:0] → w.d.
                 var all: std.ArrayList(u8) = .empty;
+                var owners: std.ArrayList(struct { []const u8, []const u8 }) = .empty; // pin, signal name
                 for (fields.items) |f| if (std.mem.eql(u8, f.name, "rows")) for (f.val.list) |row| {
                     const head = std.mem.sliceTo(row.str, '|');
                     const colon = std.mem.lastIndexOfScalar(u8, head, ':');
@@ -594,22 +601,27 @@ const LineParser = struct {
                         try p.warn("wave: signal '{s}' gets no pin (point at it with an offset from the wave instead, or rename it)", .{nm});
                         continue;
                     }
-                    var dup = std.mem.splitScalar(u8, all.items, ',');
-                    const seen = while (dup.next()) |d| {
-                        if (std.mem.eql(u8, d, pin)) break true;
-                    } else false;
-                    if (seen) {
-                        try p.warn("wave: signals '{s}' and an earlier one share the pin '{s}'; only the first gets it", .{ nm, pin });
+                    const earlier = for (owners.items) |o| {
+                        if (std.mem.eql(u8, o[0], pin)) break o[1];
+                    } else null;
+                    if (earlier) |e| {
+                        try p.warn("wave: signals '{s}' and '{s}' both become the pin '{s}'; only '{s}' gets it", .{ e, nm, pin, e });
                         continue;
                     }
+                    try owners.append(p.arena, .{ pin, nm });
                     if (all.items.len > 0) try all.append(p.arena, ',');
                     try all.appendSlice(p.arena, pin);
                 };
                 ports = all.items;
             }
+            if (box) |b| try p.lintOverlap(i, b);
             try p.scene.add(i, op.name, on, ports);
+            if (box) |b| p.scene.names.getPtr(i).?.box = b;
             if (std.mem.eql(u8, op.name, "group"))
-                for (fields.items[0].val.list) |v| p.scene.setParent(v.id, i);
+                for (fields.items[0].val.list) |v| {
+                    p.scene.setParent(v.id, i);
+                    if (p.scene.names.getPtr(v.id)) |e| e.box = null; // the group may move them
+                };
         }
 
         // Emit.
@@ -797,17 +809,17 @@ const LineParser = struct {
     /// would run off the board (x −8…8, y −4.5…4.5). Sizes are estimates of
     /// what the viewer draws (proportional glyphs ~0.45 em, monospace ~0.6 em),
     /// checked against the renderer in Chromium.
-    fn lintBounds(p: *LineParser, fields: anytype) Error!void {
+    fn lintBounds(p: *LineParser, fields: anytype) Error!?[4]f64 {
         const op = p.op.name;
         const at = for (fields) |f| {
             if (std.mem.eql(u8, f.name, "at")) switch (f.val) {
                 .point => |pt| switch (pt) {
                     .abs => |v| break v,
-                    else => return,
+                    else => return null,
                 },
-                else => return,
+                else => return null,
             };
-        } else return;
+        } else return null;
         const num = struct {
             fn get(fs: anytype, name: []const u8) ?f64 {
                 for (fs) |f| if (std.mem.eql(u8, f.name, name)) return switch (f.val) {
@@ -842,15 +854,32 @@ const LineParser = struct {
             h = f(l.n) * 1.2 * s + 0.4 * s;
             const al = fieldStr(fields, "align") orelse "center";
             x0 = if (al[0] == 'l') at[0] else if (al[0] == 'r') at[0] - w else at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "node")) {
+            const s = num.get(fields, "size") orelse 0.45;
+            const l = num.lines(fieldStr(fields, "text") orelse "");
+            const tw = f(l.w) * 0.45 * s + 0.4 * s;
+            const th = f(l.n) * 1.2 * s + 0.4 * s;
+            const shape = fieldStr(fields, "shape") orelse (if (l.w <= 3 and l.n == 1) "circle" else "box");
+            if (std.mem.eql(u8, shape, "circle")) {
+                w = @max(tw, th) + 0.7 * s;
+                h = w;
+            } else if (std.mem.eql(u8, shape, "none")) {
+                w = tw;
+                h = th;
+            } else {
+                w = tw + 0.7 * s;
+                h = th + 0.5 * s;
+            }
+            x0 = at[0] - w / 2;
         } else if (std.mem.eql(u8, op, "code")) {
-            const s = num.get(fields, "size") orelse 0.36;
+            const s = num.get(fields, "size") orelse 0.48;
             const l = num.lines(fieldStr(fields, "text") orelse "");
             const gutter: usize = std.math.log10_int(@max(l.n, 1)) + 3; // digits + 2
             w = f(l.w + gutter + 2) * 0.43 * s;
             h = (f(l.n) + 0.86 + (if (fieldStr(fields, "title") != null) @as(f64, 1.2) else 0)) * s;
             x0 = at[0] - w / 2;
         } else if (std.mem.eql(u8, op, "table")) {
-            const s = num.get(fields, "size") orelse 0.5;
+            const s = num.get(fields, "size") orelse 0.65;
             var cols: [32]usize = @splat(0);
             var ncol: usize = 0;
             var nrow: usize = 0;
@@ -894,7 +923,7 @@ const LineParser = struct {
             w = f(steps) * step + f(name_len) * @max(0.32, rh * 0.62) * 0.55 + 0.3;
             h = f(nrow) * rh * 1.9;
             x0 = at[0] - w / 2;
-        } else return;
+        } else return null;
         const tol = 0.05;
         const x1 = x0 + w;
         const y0 = at[1] - h / 2;
@@ -917,10 +946,39 @@ const LineParser = struct {
             edges[ne] = "bottom";
             ne += 1;
         }
-        if (ne == 0) return;
+        const box: [4]f64 = .{ x0, y0, x1, y1 };
+        if (ne == 0) return box;
         const which = try std.mem.join(p.arena, " and ", edges[0..ne]);
         const fix = if (w > 16 or h > 9) "make it smaller (size=) or split it" else "move it inward, shorten it or reduce size=";
         try p.warn("{s}: about {d:.1}x{d:.1}, spanning x {d:.1}..{d:.1}, y {d:.1}..{d:.1}: it runs off the {s} of the board (x -8..8, y -4.5..4.5); {s}", .{ op, w, h, x0, x1, y0, y1, which, fix });
+        return box;
+    }
+
+    /// Warn when a new box lands on boxes already on the board (one warning per line,
+    /// naming up to two of them). Small touches are ignored.
+    fn lintOverlap(p: *LineParser, name: []const u8, b: [4]f64) Error!void {
+        var hits: std.ArrayList(u8) = .empty;
+        var n: usize = 0;
+        var ix: [4]f64 = undefined;
+        for (p.scene.names.keys(), p.scene.names.values()) |k, e| {
+            const o = e.box orelse continue;
+            if (std.mem.eql(u8, k, name)) continue;
+            const x0 = @max(b[0], o[0]);
+            const y0 = @max(b[1], o[1]);
+            const x1 = @min(b[2], o[2]);
+            const y1 = @min(b[3], o[3]);
+            if (x1 <= x0 or y1 <= y0) continue;
+            if (x1 - x0 < 0.1 or y1 - y0 < 0.1) continue; // touching edges is fine
+            if (n == 0) ix = .{ x0, y0, x1, y1 };
+            n += 1;
+            if (n <= 2) {
+                if (hits.items.len > 0) try hits.appendSlice(p.arena, ", ");
+                try hits.print(p.arena, "'{s}' ({s})", .{ if (k[0] == '_') "unnamed" else k, e.op });
+            }
+        }
+        if (n == 0) return;
+        const more = if (n > 2) try std.fmt.allocPrint(p.arena, " and {d} more", .{n - 2}) else "";
+        try p.warn("{s}: overlaps {s}{s} around x {d:.1}..{d:.1}, y {d:.1}..{d:.1}; move one of them", .{ p.op.name, hits.items, more, ix[0], ix[2], ix[1], ix[3] });
     }
 
     fn lookup(p: *LineParser, name: []const u8) Error!Entity {
@@ -1557,6 +1615,22 @@ test "wrong mode: fences in plain VCL switch to mixed; commands in prose are fla
     , mixed);
 }
 
+test "overlap lint: boxes that land on each other; moved things are forgotten" {
+    try expectOut(
+        \\c: code -2,0 "int x = 1;"
+        \\n: text -1,0 "note"
+        \\move c -2,3
+        \\m: text -2.6,0 "ok"
+    ,
+        \\{"op":"code","id":"c","line":1,"par":false,"dur":0.6,"at":[-2,0,0],"text":"int x = 1;"}
+        \\{"op":"diag","level":"warning","line":2,"msg":"text: overlaps 'c' (code) around x -1.5..-0.5, y -0.4..0.4; move one of them"}
+        \\{"op":"text","id":"n","line":2,"par":false,"dur":0.5,"at":[-1,0,0],"text":"note"}
+        \\{"op":"move","line":3,"par":false,"dur":0.6,"target":"c","to":[-2,3,0]}
+        \\{"op":"text","id":"m","line":4,"par":false,"dur":0.5,"at":[-2.6,0,0],"text":"ok"}
+        \\
+    );
+}
+
 test "group needs name and reparents" {
     try expectOut(
         \\a: pt 0,0
@@ -1629,7 +1703,7 @@ test "<<TAG blocks: multi-line strings, even ``` inside mixed mode" {
         \\```
         \\}
         \\END
-        \\t: table 3,0 <<ROWS
+        \\t: table 6,0 <<ROWS
         \\A|B|Y
         \\0|0|1
         \\
@@ -1642,7 +1716,7 @@ test "<<TAG blocks: multi-line strings, even ``` inside mixed mode" {
     try testing.expectEqualStrings(
         \\{"op":"say","line":1,"par":false,"dur":1.92,"text":"Here is the loop."}
         \\{"op":"code","id":"c","line":3,"par":false,"dur":0.6,"at":[0,0,0],"text":"for (int i = 0; i < n; i++) {\n    sum += a[i];   // \"quoted\" \\n stays\n```\n}","lang":"c","focus":[2,2]}
-        \\{"op":"table","id":"t","line":9,"par":false,"dur":0.6,"at":[3,0,0],"rows":["A|B|Y","0|0|1","1|1|0"]}
+        \\{"op":"table","id":"t","line":9,"par":false,"dur":0.6,"at":[6,0,0],"rows":["A|B|Y","0|0|1","1|1|0"]}
         \\{"op":"say","line":16,"par":false,"dur":1.2,"text":"Done."}
         \\
     , got);
@@ -1667,17 +1741,17 @@ test "row pins: code lines, table rows, wave signals" {
         \\c: code 0,0 "a\nb\nc"
         \\point c.L3
         \\point c.L4
-        \\t: table 0,0 "A|B" "0|1"
+        \\t: table 0,2.5 "A|B" "0|1"
         \\point t.R1
-        \\w: wave 0,0 "clk: p.p." "data[7:0]: =.= | A B"
+        \\w: wave 0,-2.5 "clk: p.p." "data[7:0]: =.= | A B"
         \\point w.clk
     ,
         \\{"op":"code","id":"c","line":1,"par":false,"dur":0.6,"at":[0,0,0],"text":"a\nb\nc"}
         \\{"op":"point","line":2,"par":false,"dur":0.4,"at":{"ref":"c","anchor":"L3","off":[0,0,0]}}
         \\{"op":"diag","level":"error","line":3,"msg":"point: 'c' has no pin 'L4'; its pins are L1, L2, L3"}
-        \\{"op":"table","id":"t","line":4,"par":false,"dur":0.6,"at":[0,0,0],"rows":["A|B","0|1"]}
+        \\{"op":"table","id":"t","line":4,"par":false,"dur":0.6,"at":[0,2.5,0],"rows":["A|B","0|1"]}
         \\{"op":"point","line":5,"par":false,"dur":0.4,"at":{"ref":"t","anchor":"R1","off":[0,0,0]}}
-        \\{"op":"wave","id":"w","line":6,"par":false,"dur":1,"at":[0,0,0],"rows":["clk: p.p.","data[7:0]: =.= | A B"]}
+        \\{"op":"wave","id":"w","line":6,"par":false,"dur":1,"at":[0,-2.5,0],"rows":["clk: p.p.","data[7:0]: =.= | A B"]}
         \\{"op":"point","line":7,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"clk","off":[0,0,0]}}
         \\
     );
@@ -1696,13 +1770,14 @@ test "a string glued to the next character is an error, not a silent typo" {
 
 test "wave: any signal name becomes a pin; bad symbols are caught" {
     try expectOut(
-        \\w: wave 0,0 "FIFO write: 0.1" "d[7:0]: =.= | A B" "top: 1.."
+        \\w: wave 0,0 "FIFO write: 0.1" "d[7:0]: =.= | A B" "top: 1.." "FIFO_write: 0"
         \\point w.FIFO_write
         \\point w.d
         \\wave 0,0 "a: 01q"
     ,
         \\{"op":"diag","level":"warning","line":1,"msg":"wave: signal 'top' gets no pin (point at it with an offset from the wave instead, or rename it)"}
-        \\{"op":"wave","id":"w","line":1,"par":false,"dur":1,"at":[0,0,0],"rows":["FIFO write: 0.1","d[7:0]: =.= | A B","top: 1.."]}
+        \\{"op":"diag","level":"warning","line":1,"msg":"wave: signals 'FIFO write' and 'FIFO_write' both become the pin 'FIFO_write'; only 'FIFO write' gets it"}
+        \\{"op":"wave","id":"w","line":1,"par":false,"dur":1,"at":[0,0,0],"rows":["FIFO write: 0.1","d[7:0]: =.= | A B","top: 1..","FIFO_write: 0"]}
         \\{"op":"point","line":2,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"FIFO_write","off":[0,0,0]}}
         \\{"op":"point","line":3,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"d","off":[0,0,0]}}
         \\{"op":"diag","level":"error","line":4,"msg":"wave: unknown symbol 'q' in \"a: 01q\" (use 0 1 z x . = p n, after 'name:')"}
@@ -1729,11 +1804,11 @@ test "bounds lint: text and panels that run off the board" {
 test "block size lint warns before things overlap" {
     try expectOut(
         \\pc: block 0,0 1.3,1.2 "PC" in="next" out="addr"
-        \\ok: block 0,0 2.4,1.2 "PC" in="next" out="addr"
+        \\ok: block 0,2 2.4,1.2 "PC" in="next" out="addr"
     ,
         \\{"op":"diag","level":"warning","line":1,"msg":"block: 1.3x1.2 is too small for its title and ports (they will overlap); try at least 1.8x1.2"}
         \\{"op":"block","id":"pc","line":1,"par":false,"dur":0.6,"at":[0,0,0],"size":[1.3,1.2,0],"text":"PC","in":"next","out":"addr"}
-        \\{"op":"block","id":"ok","line":2,"par":false,"dur":0.6,"at":[0,0,0],"size":[2.4,1.2,0],"text":"PC","in":"next","out":"addr"}
+        \\{"op":"block","id":"ok","line":2,"par":false,"dur":0.6,"at":[0,2,0],"size":[2.4,1.2,0],"text":"PC","in":"next","out":"addr"}
         \\
     );
 }

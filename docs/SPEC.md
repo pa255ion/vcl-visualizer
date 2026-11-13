@@ -181,8 +181,8 @@ log log2 floor ceil round min max pow sign mod`.
 
 | Op | Arguments | Keys |
 |---|---|---|
-| `code` | `P S` | syntax-highlighted source (`<<END` block); `lang=` (c cpp zig rust python js ts java go verilog vhdl asm sh…) `title=S` `lines=bool` `focus=R` (highlight lines, dim the rest; `set c focus=` moves it) `size=N` (line height). Pins `L1…` |
-| `table` | `P S…` | one string per row, cells split by `\|`; `header=bool` (default true) `focus=R` (data rows) `size=N`. Pins `R1…` |
+| `code` | `P S` | syntax-highlighted source (`<<END` block); `lang=` (c cpp zig rust python js ts java go verilog vhdl asm sh…) `title=S` `lines=bool` `focus=R` (highlight lines, dim the rest; `set c focus=` moves it) `size=N` (line height, default 0.48). Pins `L1…` |
+| `table` | `P S…` | one string per row, cells split by `\|`; `header=bool` (default true) `focus=R` (data rows) `size=N` (row height, default 0.65). Pins `R1…` |
 | `wave` | `P S…` | timing diagram, one row per signal: `"name: pattern [\| labels]"` with `0 1` levels, `z` high-Z, `x` unknown, `.` repeat, `=` (or `2`–`9`) a bus value named by the next label, `p`/`n` one clock period. `step=N` `size=N`. Pins: signal names (see §1). |
 | `svg` | `P S` | URL or inline markup (`<<END`), rasterized sharply; `size=N` (width) |
 
@@ -243,9 +243,10 @@ line 4: warning: rect: unknown key 'colour' (did you mean 'color'?)
 Warnings are also given for layout the parser can predict: a `block` too
 small for its title and ports, and `text`, `code`, `table`, `block` or `wave`
 placed at board coordinates that would run off the board (sizes are estimated
-from character counts, so treat a near miss as a hint). Anything with `on=` is
-in data coordinates and not checked; overlaps between entities are not
-detected.
+from character counts, so treat a near miss as a hint), and any of those (or a
+`node`) that lands on another one already on the board. Anything with `on=` is
+in data coordinates and not checked, nor are labels, lines, shapes and `tex`;
+an entity that was moved, scaled, faded or grouped is no longer compared.
 
 Diagnostics go back to whoever sent the text, so an LLM harness can return
 them to the model as tool output.

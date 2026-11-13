@@ -1,6 +1,6 @@
 # Walking through code: focus moves line by line, notes point at lines.
 title "Pushing into a ring buffer"
-c: code -2.6,0.2 lang=zig title="ring.zig" <<END
+c: code -2.6,0.2 lang=zig size=0.4 title="ring.zig" <<END
 pub fn push(self: *Ring, x: u8) error{Full}!void {
     if (self.len == self.buf.len) return error.Full;
     const tail = (self.head + self.len) % self.buf.len;

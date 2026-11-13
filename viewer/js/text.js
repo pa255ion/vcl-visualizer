@@ -61,8 +61,17 @@ export class TextPlane {
     this.material.map?.dispose();
     this.material.map = makeTexture(canvas);
     this.material.needsUpdate = true;
+    const ax = this.align === 'left' ? (h * aspect) / 2 : this.align === 'right' ? -(h * aspect) / 2 : 0;
+    this.mesh.position.x += ax - (this.alignX ?? 0); // keep wherever it was placed
+    this.alignX = ax;
     this.mesh.scale.set(h * aspect, h, 1);
-    this.mesh.position.x = this.align === 'left' ? (h * aspect) / 2 : this.align === 'right' ? -(h * aspect) / 2 : 0;
+  }
+
+  /** Put the text's anchor point (its left/centre/right edge, per `align`) at `v`. */
+  placeAt(v) {
+    this.mesh.position.copy(v);
+    this.mesh.position.x += this.alignX;
+    return this;
   }
 
   /** Show an arbitrary canvas, `height` board units tall (code, tables, SVG). */

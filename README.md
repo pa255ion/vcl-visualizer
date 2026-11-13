@@ -32,8 +32,8 @@ coordinates, and wires drawn between pins follow the parts when they move.
 
 Not there yet:
 - Automatic layout: the model chooses coordinates. Lint warnings catch blocks
-  that are too small and text, panels, blocks and waves that run off the
-  board, but not overlaps between entities.
+  that are too small, and text, panels, blocks, waves and nodes that run off
+  the board or onto each other; labels, lines, shapes and LaTeX aren't checked.
 - Smart wire routing: the routes are simple right-angle shapes. A wire doubling
   back around a part needs corner points.
 - Analog waveforms on a time axis (use `plot`), state machines (use

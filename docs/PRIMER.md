@@ -43,7 +43,7 @@ wave P "clk: p..." "en: 0.1..0" "d[7:0]: x=.=. | A5 3C" step=0.5    0 1 z x . = 
 set c focus=5       move the highlighted lines/rows        arrow note.left c.L5   point at a line
   Pins of code lines, table rows and wave signals sit at the right edge, facing right.
 ```
-Leave about 1 unit around parts for labels. A `block` warning means it's too small for its title and ports; enlarge it. A "runs off the board" warning means move, shorten or shrink it.
+Leave about 1 unit around parts for labels. A `block` warning means it's too small for its title and ports; enlarge it. A "runs off the board" or "overlaps" warning means move, shorten or shrink it.
 
 **Good habits**
 - Name things you'll mention again. Prefer references (`line A B`, `arrow p.right q.left`) to recomputing coordinates; lines drawn between named points follow them when they move.
