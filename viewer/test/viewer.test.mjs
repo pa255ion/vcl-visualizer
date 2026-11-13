@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compile } from '../js/expr.js';
 import { Timeline } from '../js/timeline.js';
+import { existsSync, readFileSync } from 'node:fs';
 
 const ev = (src, s = {}) => compile(src)({ x: 0, y: 0, t: 0, ...s });
 
@@ -79,4 +80,28 @@ test('timeline: a failing begin skips only that task', () => {
   tl.tick(0);
   assert.deepEqual(errors, ['boom']);
   assert.deepEqual(log, ['ok']);
+});
+
+const ttsWasm = new URL('../tts.wasm', import.meta.url);
+test('tts.wasm: speech with an exact duration', { skip: !existsSync(ttsWasm) && 'run `zig build` first' }, async () => {
+  const { instance } = await WebAssembly.instantiate(readFileSync(ttsWasm), {});
+  const x = instance.exports;
+  const say = (text, engine = 1, rate = 1) => {
+    const b = new TextEncoder().encode(text);
+    const p = x.tts_alloc(b.length);
+    new Uint8Array(x.memory.buffer, p, b.length).set(b);
+    const rc = x.tts_speak(p, b.length, engine, rate, 1);
+    x.tts_free(p, b.length);
+    return rc;
+  };
+  assert.equal(say('y equals two x plus b.'), 0);
+  assert.equal(x.tts_sample_rate(), 16000);
+  const secs = x.tts_seconds();
+  assert.ok(secs > 1 && secs < 4, `duration ${secs}`);
+  assert.equal(x.tts_len(), Math.round(secs * 16000));
+  const s = new Float32Array(x.memory.buffer, x.tts_samples(), x.tts_len());
+  assert.ok(s.some((v) => Math.abs(v) > 0.05), 'audible');
+  assert.equal(say('y equals two x plus b.', 1, 1.5), 0);
+  assert.ok(x.tts_seconds() < secs, 'faster rate is shorter');
+  assert.equal(say('hello', 9), -3, 'unknown engine rejected');
 });

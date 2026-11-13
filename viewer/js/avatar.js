@@ -11,7 +11,8 @@ export class Avatar {
     this.root.position.copy(position);
     this.root.scale.setScalar(scale);
     this.baseY = position.y;
-    this.voice = false;
+    /** Optional () => 0..1 | null: real voice loudness for the mouth. */
+    this.level = null;
 
     const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, ...extra });
     const glow = new THREE.MeshBasicMaterial({ color: GLOW });
@@ -101,12 +102,6 @@ export class Avatar {
     this.speakUntil = now + dur;
     this.#subtitle(text, dur + 0.8);
     this.onSay?.(text);
-    if (this.voice && 'speechSynthesis' in window) {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.05;
-      speechSynthesis.speak(u);
-    }
   }
 
   #subtitle(text, secs) {
@@ -180,7 +175,8 @@ export class Avatar {
 
     // Speaking: mouth and antenna.
     const speaking = t < this.speakUntil;
-    const talk = speaking ? 0.5 + 0.5 * Math.abs(Math.sin(t * 13) * Math.sin(t * 4.7)) : 0;
+    const heard = this.level?.();
+    const talk = heard ?? (speaking ? 0.5 + 0.5 * Math.abs(Math.sin(t * 13) * Math.sin(t * 4.7)) : 0);
     this.mouth.scale.set(1, 1 + talk * 0.4, 1 + talk * 3);
     this.bulb.scale.setScalar(1 + (speaking ? 0.3 * Math.abs(Math.sin(t * 6)) : this.thinking ? 0.45 * (0.5 + 0.5 * Math.sin(t * 5)) : 0));
 

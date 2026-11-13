@@ -68,6 +68,8 @@ cursor:
 * A command prefixed with `&` starts at the same time as the previous one.
 * `wait N` moves the cursor N seconds forward.
 * `say` lasts as long as it takes to speak (≈ 0.4 s per word) unless `dur=` is given.
+  A renderer with real speech synthesis replaces that estimate with the audio's
+  length (the WebXR viewer does).
 
 So a lesson reads like a script: one beat after another, with `&` to bundle
 things that should happen together.

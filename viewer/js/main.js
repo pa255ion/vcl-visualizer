@@ -16,6 +16,7 @@ import { Runtime } from './runtime.js';
 import { Avatar } from './avatar.js';
 import { STAGE_SCALE, setLineResolution, roundedRectPoints, Stroke } from './draw.js';
 import { Transport } from './transport.js';
+import { Voice } from './voice.js';
 import { loadParser } from './vcl-wasm.js';
 
 const params = new URLSearchParams(location.search);
@@ -98,7 +99,9 @@ function log(level, msg) {
   else console.log(msg);
 }
 
-const runtime = new Runtime({ stage, camera, avatar, log });
+const voice = new Voice({ camera, speaker: avatar.head, url: new URL(`../tts.wasm${VQ}`, import.meta.url).href, log });
+avatar.level = () => voice.level();
+const runtime = new Runtime({ stage, camera, avatar, voice, log });
 
 // ── command sources ──
 const status = $('#status');
@@ -197,7 +200,8 @@ editor.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); $('#run').click(); }
 });
 $('#toggle-editor').onclick = () => document.body.classList.toggle('editing');
-$('#voice').onchange = (e) => { avatar.voice = e.target.checked; };
+$('#voice').value = voice.mode;
+$('#voice').onchange = (e) => voice.setMode(e.target.value);
 
 async function loadLesson(name) {
   const res = await fetch(`lessons/${name}${VQ}`);
@@ -216,6 +220,7 @@ if (params.has('lesson')) {
   const file = /\.(vcl|md)$/.test(n) ? n : `${n}.vcl`;
   (async () => {
     await loadLesson(file);
+    await voice.loading; // so the first lines are already voiced
     if (transport) await new Promise((r) => { const t = setInterval(() => transport.connected && (clearInterval(t), r()), 50); setTimeout(r, 2000); });
     await run('clear\n', 'vcl');
     await run(editor.value, modeSel.value);

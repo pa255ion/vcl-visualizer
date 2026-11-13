@@ -83,6 +83,8 @@ S     = start
 ```
 
 Run the command at `start`, animate over `dur`, finish at `start + dur`.
+A renderer that synthesizes speech may replace a `say`'s `dur` with the audio's
+length **when the command arrives**, before scheduling it.
 Resolve point references **when the command starts**, not when it arrives.
 `viewer/js/timeline.js` is the reference implementation (about 80 lines).
 

@@ -67,6 +67,20 @@ node tools/tutor/tutor.mjs             # --effort low for snappier replies; --mo
 * **Test:** `cd tools/tutor && npm test` runs the whole loop against a mock
   API: no credentials, no cost.
 
+## The teacher's voice
+
+By default the robot speaks with [tts-lab](https://github.com/pa255ion/tts-lab)'s
+refined formant synthesizer, compiled into the viewer as `tts.wasm` (177 KB,
+pinned in `build.zig.zon`). Each `say` is synthesized in a few milliseconds
+when it arrives and then lasts exactly as long as its audio, so speech and
+drawing stay in step. The voice comes from the robot's head (positional audio
+in VR) and its mouth follows the loudness. This works offline and on the
+static site.
+
+The header's voice menu switches to the browser's own speech (its timing stays
+an estimate) or turns the voice off. Browsers only allow sound after you click
+or press a key, so a lesson that autoplays stays silent until then.
+
 ## As a static site
 
 The viewer works on any static host. The parser ships as wasm, so lessons
@@ -136,7 +150,14 @@ node --test viewer/test/*.test.mjs    # expression compiler, scheduler
 
 ## Not done yet
 
-* TTS with real timing. `say` uses an estimate, and the "voice" checkbox uses
-  the browser's speech synthesis.
+* Lip-sync from tts-lab's phone timings (currently loudness only), and running
+  synthesis in a worker for long bursts of speech.
 * A rigged avatar, interacting with entities in VR (grab or ask about a thing),
   `morph` between shapes, tables, a binary wire format, and the Unity client.
+
+## Credits
+
+`tts.wasm` is built from [tts-lab](https://github.com/pa255ion/tts-lab) (MIT),
+whose built-in pronunciations come from the CMU Pronouncing Dictionary
+(© 1993–2015 Carnegie Mellon University, BSD-style licence). Both licence texts
+ship with the viewer in `viewer/licenses/`.

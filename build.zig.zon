@@ -3,5 +3,11 @@
     .version = "0.1.0",
     .fingerprint = 0xa5e9d8e7b5d7a327,
     .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .tts_lab = .{
+            .url = "git+https://github.com/pa255ion/tts-lab#79a1df9f06d418b6281d73dd244513c44cae850b",
+            .hash = "ttslab-0.1.0-sFQb201QAwATmq0jJd-lxiQqi-98jficKWBLG1blvr1i",
+        },
+    },
     .paths = .{ "build.zig", "build.zig.zon", "core" },
 }

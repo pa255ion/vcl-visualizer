@@ -123,10 +123,11 @@ class Entity {
 // ───────────────────────────── Runtime ─────────────────────────────
 
 export class Runtime {
-  constructor({ stage, camera, avatar = null, log = console.log }) {
+  constructor({ stage, camera, avatar = null, voice = null, log = console.log }) {
     this.stage = stage;
     this.camera = camera;
     this.avatar = avatar;
+    this.voice = voice;
     this.log = log;
     this.entities = new Map();
     this.timeline = new Timeline((e, t) => this.log('error', `line ${t.cmd?.line ?? '?'}: ${t.cmd?.op}: ${e.message}`));
@@ -146,6 +147,8 @@ export class Runtime {
     }
     const h = this.handlers[cmd.op];
     if (!h) return this.log('warning', `viewer: unsupported op '${cmd.op}'`);
+    // Real speech: synthesize now so the timeline knows exactly how long it lasts.
+    if (cmd.op === 'say' && !instant) this.voice?.prepare(cmd);
     const task = h.call(this, cmd);
     task.cmd = cmd;
     task.dur = cmd.dur ?? 0;
@@ -296,7 +299,9 @@ const H = {};
 Runtime.prototype.handlers = H;
 
 H.wait = () => ({});
-H.say = function (c) { return { begin: () => this.avatar?.say(c.text, c.dur) }; };
+H.say = function (c) {
+  return { begin: () => { this.avatar?.say(c.text, c.dur); this.voice?.play(c); } };
+};
 H.point = function (c) { return { begin: () => this.avatar?.point(c.at ? this.pointWorld(c.at) : null, c.dur) }; };
 H.title = function (c) { return this.create({ ...c, id: '__title', op: 'title' }); };
 

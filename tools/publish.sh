@@ -17,10 +17,11 @@ version=$(git rev-parse --short HEAD)$(git diff --quiet HEAD -- viewer core || e
 
 dest="$site/$sub"
 rm -rf "$dest"
-mkdir -p "$dest/js" "$dest/lessons"
-cp viewer/index.html viewer/style.css viewer/vcl.wasm "$dest/"
+mkdir -p "$dest/js" "$dest/lessons" "$dest/licenses"
+cp viewer/index.html viewer/style.css viewer/vcl.wasm viewer/tts.wasm "$dest/"
 cp viewer/js/*.js "$dest/js/"
 cp viewer/lessons/* "$dest/lessons/"
+cp viewer/licenses/* "$dest/licenses/"
 
 v="?v=$version"
 sed -i -e 's|<html lang="en">|<html lang="en" data-static>|' \

@@ -5,3 +5,5 @@ core/zig-out/
 viewer/vcl.wasm
 result
 node_modules/
+viewer/tts.wasm
+zig-pkg/

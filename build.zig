@@ -39,9 +39,29 @@ pub fn build(b: *std.Build) void {
     });
     wasm.entry = .disabled;
     wasm.rdynamic = true;
+    // Speech: tts-lab (github.com/pa255ion/tts-lab) for the browser → viewer/tts.wasm
+    const wasm_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+    const tts_dep = b.dependency("tts_lab", .{});
+    const tts_wasm = b.addExecutable(.{
+        .name = "tts",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("core/src/tts_wasm.zig"),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+            .imports = &.{.{ .name = "tts", .module = b.createModule(.{
+                .root_source_file = tts_dep.path("src/tts.zig"),
+                .target = wasm_target,
+                .optimize = .ReleaseSmall,
+            }) }},
+        }),
+    });
+    tts_wasm.entry = .disabled;
+    tts_wasm.rdynamic = true;
+
     const copy = b.addUpdateSourceFiles();
     copy.addCopyFileToSource(wasm.getEmittedBin(), "viewer/vcl.wasm");
-    b.step("wasm", "Build viewer/vcl.wasm").dependOn(&copy.step);
+    copy.addCopyFileToSource(tts_wasm.getEmittedBin(), "viewer/tts.wasm");
+    b.step("wasm", "Build viewer/vcl.wasm and viewer/tts.wasm").dependOn(&copy.step);
     b.getInstallStep().dependOn(&copy.step);
 
     // Tests
