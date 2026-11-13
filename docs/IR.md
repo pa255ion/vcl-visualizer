@@ -15,6 +15,8 @@ everything: names exist, types are right, and `plot`'s axes really are axes.
 | `GET /ws` | client → server | VCL text chunks (lines run when their `\n` arrives). `?mode=mixed` for prose + fences, `?listen=0` for send-only producers |
 | `POST /vcl?mode=&pace=` | client → server | VCL text; reply is plain-text diagnostics. `pace=MS` sleeps between lines to mimic streaming |
 | `GET /scene` | server → client | `{"cmds":[…]}`: everything needed to rebuild the current scene |
+| `POST /ask` | client → server | a learner question (plain text); broadcast as an `ask` event |
+| `POST /status` | tutor → server | `thinking` or `idle`; broadcast as a `status` event |
 
 On connect, a listening WebSocket client first gets
 `{"op":"replay","cmds":[…]}`. Apply those commands **instantly** (no
@@ -49,6 +51,18 @@ All other fields are the op's arguments, named as in the spec tables
 | range | `[lo, hi]` |
 | bool | `true` / `false` |
 | repeatable args | arrays (`pts`, `ids`, `exprs`) |
+
+### Conversation events
+
+Not commands and never replayed. A renderer shows them on the teacher:
+
+```json
+{"op":"ask","text":"Why does the slope change?"}   // a learner question (POST /ask)
+{"op":"status","text":"thinking"}                  // or "idle" (POST /status, from the tutor)
+```
+
+The tutor (`tools/tutor`) listens for `ask`, streams Claude's reply back in
+mixed mode, and posts `status` around each turn.
 
 ### Diagnostics
 

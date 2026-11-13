@@ -11,6 +11,8 @@
 //!   POST /vcl         body = VCL text (?mode=mixed, ?pace=MS between lines);
 //!                     responds with plain-text diagnostics
 //!   GET  /scene       current scene as {"cmds":[...]} (for late joiners/pollers)
+//!   POST /ask         a learner question → broadcast {"op":"ask","text":…}
+//!   POST /status      tutor state ("thinking"/"idle") → {"op":"status","text":…}
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -406,6 +408,32 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         try req.respond(report.text.items, .{ .extra_headers = &.{
             cors, .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
         } });
+        return true;
+    }
+
+    // Conversation events: a learner's question (/ask) or the tutor's state
+    // (/status: "thinking" | "idle"). Broadcast as {"op":"ask"|"status","text":…},
+    // not recorded for replay.
+    if (method == .POST and (std.mem.eql(u8, path, "/ask") or std.mem.eql(u8, path, "/status"))) {
+        const reader = try req.readerExpectContinue(&conn.body_buf);
+        const body = try reader.allocRemaining(gpa, .limited(64 << 10));
+        defer gpa.free(body);
+        const text = std.mem.trim(u8, body, " \t\r\n");
+        if (text.len == 0) {
+            try req.respond("empty\n", .{ .status = .bad_request, .extra_headers = &.{cors} });
+            return true;
+        }
+        var aw: Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+        try aw.writer.print("{{\"op\":\"{s}\",\"text\":", .{path[1..]});
+        try vcl.writeJsonString(&aw.writer, text);
+        try aw.writer.writeAll("}");
+        {
+            hub.lock();
+            defer hub.unlock();
+            hub.broadcast(aw.written());
+        }
+        try req.respond("ok\n", .{ .extra_headers = &.{cors} });
         return true;
     }
 

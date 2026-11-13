@@ -30,6 +30,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
+// Text is the content here: keep fixed foveation light so the board's edges stay sharp.
+renderer.xr.setFoveation(0.3);
 document.body.prepend(renderer.domElement);
 
 const BG = new THREE.Color('#0b0f16');
@@ -111,14 +113,27 @@ async function localParser() {
   return parser;
 }
 
+/** Conversation events (from the tutor, tools/tutor) go to the teacher; the rest is IR. */
+function onCmd(cmd) {
+  if (cmd.op === 'ask') {
+    log('info', `you: ${cmd.text}`);
+    avatar.hear(`You: ${cmd.text}`);
+  } else if (cmd.op === 'status') {
+    avatar.thinking = cmd.text === 'thinking';
+  } else runtime.exec(cmd, { instant: cmd.op === 'replay' });
+}
+
 let transport = null;
 const serverUrl = params.get('server') ?? (location.protocol.startsWith('http') ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws` : null);
 const isStatic = document.documentElement.hasAttribute('data-static');
 if (serverUrl && !params.has('offline') && !isStatic) {
   transport = new Transport({
     url: serverUrl,
-    onCmd: (cmd) => runtime.exec(cmd, { instant: cmd.op === 'replay' }),
-    onStatus: (s) => setStatus(s, s === 'live' ? 'live' : s === 'connecting' ? 'connecting…' : 'offline · local'),
+    onCmd,
+    onStatus: (s) => {
+      setStatus(s, s === 'live' ? 'live' : s === 'connecting' ? 'connecting…' : 'offline · local');
+      $('#ask-form').hidden = s !== 'live';
+    },
   });
   transport.connect();
 } else setStatus('offline', 'offline · local');
@@ -135,6 +150,41 @@ async function run(text, mode = 'vcl') {
   const p = await localParser();
   if (p.mode !== mode) p.reset(mode);
   for (const cmd of p.feed(text)) runtime.exec(cmd);
+}
+
+// ── asking the teacher (needs the server and a running tutor) ──
+async function ask(text) {
+  text = text.trim();
+  if (!text || !transport?.connected) return;
+  const base = serverUrl.replace(/^ws/, 'http').replace(/\/ws$/, '');
+  await fetch(`${base}/ask`, { method: 'POST', body: text }).catch((e) => log('error', `ask: ${e.message}`));
+}
+$('#ask-form').onsubmit = (e) => {
+  e.preventDefault();
+  ask($('#ask').value);
+  $('#ask').value = '';
+};
+
+// Voice input, where the browser has speech recognition (feature-detected).
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let listening = null;
+function startListening() {
+  if (!Recognition || listening) return;
+  const r = new Recognition();
+  r.lang = navigator.language || 'en-US';
+  r.interimResults = false;
+  r.onresult = (e) => ask(e.results[0][0].transcript);
+  r.onerror = (e) => log('warning', `voice: ${e.error}`);
+  r.onend = () => { listening = null; $('#mic').classList.remove('listening'); };
+  r.start();
+  listening = r;
+  $('#mic').classList.add('listening');
+  avatar.hear('listening…', { thinking: false });
+}
+function stopListening() { listening?.stop(); }
+if (Recognition) {
+  $('#mic').hidden = false;
+  $('#mic').onclick = () => (listening ? stopListening() : startListening());
 }
 
 // ── editor / lessons ──
@@ -191,6 +241,26 @@ async function xrButton(mode, el) {
 xrButton('immersive-vr', $('#enter-vr'));
 xrButton('immersive-ar', $('#enter-ar'));
 
+// ── VR comfort: where the classroom sits ──
+// Grip re-centres in front of you; right stick forward/back moves the board
+// farther/closer, left stick raises/lowers it. Remembered per device.
+const placement = { dist: 0, height: 0, yaw: 0, x: 0, y: 0, z: 0 };
+// Only distance and height persist: the headset's floor origin (and so any
+// re-centred position) changes every session.
+try {
+  const { dist = 0, height = 0 } = JSON.parse(localStorage.getItem('vcl.placement') || '{}');
+  Object.assign(placement, { dist: +dist || 0, height: +height || 0 });
+} catch {}
+function savePlacement() {
+  try { localStorage.setItem('vcl.placement', JSON.stringify({ dist: placement.dist, height: placement.height })); } catch {}
+}
+function applyPlacement() {
+  classroom.rotation.y = placement.yaw;
+  const off = new THREE.Vector3(0, placement.height, placement.dist).applyAxisAngle(new THREE.Vector3(0, 1, 0), placement.yaw);
+  classroom.position.set(placement.x, placement.y, placement.z).add(off);
+}
+applyPlacement();
+
 // Controllers: a short ray each; squeeze (grip) re-centres the classroom in front of you.
 for (let i = 0; i < 2; i++) {
   const c = renderer.xr.getController(i);
@@ -205,9 +275,34 @@ function recenter() {
   const head = renderer.xr.getCamera();
   const pos = head.getWorldPosition(new THREE.Vector3());
   const dir = head.getWorldDirection(new THREE.Vector3());
-  const yaw = Math.atan2(-dir.x, -dir.z);
-  classroom.rotation.y = yaw;
-  classroom.position.set(pos.x, pos.y - 1.6, pos.z);
+  Object.assign(placement, { yaw: Math.atan2(-dir.x, -dir.z), x: pos.x, y: pos.y - 1.6, z: pos.z });
+  applyPlacement();
+  savePlacement();
+}
+
+/** Thumbsticks move the board; A (right) / X (left) is push-to-talk. */
+let sticksMoved = false, talkHeld = false;
+function readControllers(dt) {
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  let moved = false, talk = false;
+  for (const src of session.inputSources) {
+    const gp = src.gamepad;
+    if (!gp) continue;
+    const y = gp.axes[3] ?? 0;
+    if (Math.abs(y) > 0.25) {
+      moved = true;
+      if (src.handedness === 'right') placement.dist = THREE.MathUtils.clamp(placement.dist + y * dt * 0.9, -2.5, 1.6);
+      if (src.handedness === 'left') placement.height = THREE.MathUtils.clamp(placement.height - y * dt * 0.5, -0.9, 0.9);
+    }
+    if (gp.buttons[4]?.pressed) talk = true;
+  }
+  if (moved) applyPlacement();
+  if (sticksMoved && !moved) savePlacement();
+  sticksMoved = moved;
+  if (talk && !talkHeld) startListening();
+  if (!talk && talkHeld) stopListening();
+  talkHeld = talk;
 }
 
 // ── loop ──
@@ -222,6 +317,7 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (!renderer.xr.isPresenting) controls.update();
+  else readControllers(dt);
   runtime.update(dt);
   avatar.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   renderer.render(scene, camera);

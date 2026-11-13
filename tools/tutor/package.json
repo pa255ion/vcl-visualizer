@@ -1,0 +1,13 @@
+{
+  "name": "vcl-tutor",
+  "private": true,
+  "type": "module",
+  "description": "Bridge between Claude and `vcl serve`: learner questions in, streamed lessons out",
+  "scripts": {
+    "start": "node tutor.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0"
+  }
+}

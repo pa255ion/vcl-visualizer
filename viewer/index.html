@@ -18,6 +18,10 @@
   <header id="bar">
     <span class="brand">VCL</span>
     <span id="status" data-state="connecting">connecting…</span>
+    <form id="ask-form" hidden>
+      <input id="ask" placeholder="Ask the teacher…" autocomplete="off" enterkeyhint="send">
+      <button type="button" id="mic" hidden title="Click, then speak">Talk</button>
+    </form>
     <span class="spacer"></span>
     <label class="check"><input type="checkbox" id="voice"> voice</label>
     <button id="toggle-editor" title="Show the editor">Editor</button>

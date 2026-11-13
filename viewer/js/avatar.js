@@ -74,6 +74,7 @@ export class Avatar {
     this.sub.mesh.position.z = 0.002;
     this.subRoot.visible = false;
 
+    this.thinking = false;
     this.pointTarget = null;
     this.pointUntil = 0;
     this.speakUntil = 0;
@@ -86,10 +87,30 @@ export class Avatar {
     scene.add(this.root, this.beam, this.dot, this.subRoot);
   }
 
+  /** Show what the learner asked (or a status line) in the subtitle strip. */
+  hear(text, { thinking = true } = {}) {
+    this.thinking = thinking;
+    this.sub.material.color.set('#9fb4cc');
+    this.#subtitle(text, 4);
+  }
+
   say(text, dur) {
+    this.thinking = false;
+    this.sub.material.color.set('#f5f7fa');
     const now = this.t;
     this.speakUntil = now + dur;
-    this.subUntil = now + dur + 0.8;
+    this.#subtitle(text, dur + 0.8);
+    this.onSay?.(text);
+    if (this.voice && 'speechSynthesis' in window) {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05;
+      speechSynthesis.speak(u);
+    }
+  }
+
+  #subtitle(text, secs) {
+    this.subUntil = this.t + secs;
     // Wrap long lines for the subtitle strip.
     const words = String(text).split(/\s+/);
     const lines = [];
@@ -101,13 +122,6 @@ export class Avatar {
     this.sub.setText(lines.join('\n'));
     this.subPanel.scale.set(this.sub.width + 0.06, this.sub.height + 0.02, 1);
     this.subRoot.visible = true;
-    this.onSay?.(text);
-    if (this.voice && 'speechSynthesis' in window) {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.05;
-      speechSynthesis.speak(u);
-    }
   }
 
   /** Point at a world position (or stop with null). */
@@ -123,7 +137,8 @@ export class Avatar {
 
     if (this.pointTarget && t > this.pointUntil) this.pointTarget = null;
     const camPos = camera.getWorldPosition(new THREE.Vector3());
-    const look = this.pointTarget ?? camPos;
+    // Thinking: glance up and to the side.
+    const look = this.pointTarget ?? (this.thinking ? this.head.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0.4, 0.5, 1)) : camPos);
 
     // Head turns toward the look target (smoothly).
     const headWorld = this.head.getWorldPosition(new THREE.Vector3());
@@ -167,7 +182,7 @@ export class Avatar {
     const speaking = t < this.speakUntil;
     const talk = speaking ? 0.5 + 0.5 * Math.abs(Math.sin(t * 13) * Math.sin(t * 4.7)) : 0;
     this.mouth.scale.set(1, 1 + talk * 0.4, 1 + talk * 3);
-    this.bulb.scale.setScalar(1 + (speaking ? 0.3 * Math.abs(Math.sin(t * 6)) : 0));
+    this.bulb.scale.setScalar(1 + (speaking ? 0.3 * Math.abs(Math.sin(t * 6)) : this.thinking ? 0.45 * (0.5 + 0.5 * Math.sin(t * 5)) : 0));
 
     // Blink.
     if (t > this.nextBlink) this.nextBlink = t + 2.5 + Math.random() * 3;

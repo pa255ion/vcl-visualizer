@@ -41,6 +41,32 @@ Viewer URL options: `?lesson=derivative` autoplays a lesson, `?skip=1` jumps
 to its end state, `?view=side` puts the desktop camera off to the side, and
 `?server=ws://host:8080/ws` connects to another server.
 
+## Talking to the teacher (Claude)
+
+`tools/tutor` connects Claude to a running server. Questions come from the
+viewer's **Ask** box, its **Talk** button (where the browser has speech
+recognition), push-to-talk in VR, or the tutor's own terminal prompt. The reply
+streams straight into the scene: prose becomes speech and subtitles, and
+```` ```vcl ```` blocks draw as they arrive.
+
+```sh
+nix develop
+(cd tools/tutor && npm install)        # official Anthropic SDK
+ant auth login                         # or: export ANTHROPIC_API_KEY=…
+zig-out/bin/vcl serve &                # if it isn't already running
+node tools/tutor/tutor.mjs             # --effort low for snappier replies; --model …
+```
+
+* **Model:** Claude Opus 5.5 at `medium` effort. It runs with server-side refusal
+  fallbacks (`fallbacks: "default"`), so if a safety classifier declines a turn
+  it's retried on Anthropic's recommended model instead of going silent.
+* **Self-repair:** lines that fail to parse are sent back to Claude once, with
+  the error, and it redraws just those.
+* **Context:** each question carries the names currently on the board, so the
+  teacher can build on what's there (including what you drew yourself).
+* **Test:** `cd tools/tutor && npm test` runs the whole loop against a mock
+  API: no credentials, no cost.
+
 ## As a static site
 
 The viewer works on any static host. The parser ships as wasm, so lessons
@@ -73,7 +99,16 @@ WebXR needs a secure origin, which means `localhost` or HTTPS.
   `http://<desktop-ip>:8080` under *Insecure origins treated as secure* in
   the Quest browser's `chrome://flags`.
 
-In VR, squeeze a grip button to bring the board in front of you.
+In VR:
+
+| Control | Does |
+|---|---|
+| Grip (either hand) | bring the board in front of you |
+| Right stick forward / back | move the board farther / closer |
+| Left stick forward / back | raise / lower the board |
+| A or X, hold | push-to-talk, if the Quest browser offers speech recognition |
+
+Distance and height are remembered on each device.
 
 ## Layout
 
@@ -96,12 +131,11 @@ docs/                SPEC, IR, PRIMER
 ```sh
 zig build test                        # parser
 node --test viewer/test/*.test.mjs    # expression compiler, scheduler
+(cd tools/tutor && npm test)          # tutor loop against a mock API (after zig build)
 ```
 
 ## Not done yet
 
-* Real LLM bridge: stream a model's reply into `/ws?mode=mixed`, then return
-  diagnostics to it as tool output.
 * TTS with real timing. `say` uses an estimate, and the "voice" checkbox uses
   the browser's speech synthesis.
 * A rigged avatar, interacting with entities in VR (grab or ask about a thing),
