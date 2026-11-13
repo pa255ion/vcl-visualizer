@@ -14,7 +14,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Runtime } from './runtime.js';
 import { Avatar } from './avatar.js';
-import { STAGE_SCALE, setLineResolution, roundedRectPoints, Stroke } from './draw.js';
+import { STAGE_SCALE, setLineResolution } from './draw.js';
+import { Board } from './board.js';
 import { Transport } from './transport.js';
 import { Voice } from './voice.js';
 import { loadParser } from './vcl-wasm.js';
@@ -69,23 +70,64 @@ scene.add(room);
 
 // The board: a dark slate panel; `stage` is its coordinate system (board units).
 const stage = new THREE.Group();
-stage.position.copy(BOARD);
 stage.scale.setScalar(STAGE_SCALE);
 classroom.add(stage);
-const boardOutline = roundedRectPoints(17, 9.8, 0.35);
-const boardMesh = new THREE.Mesh(
-  new THREE.ShapeGeometry(new THREE.Shape(boardOutline.map((p) => new THREE.Vector2(p.x, p.y)))),
-  new THREE.MeshBasicMaterial({ color: '#121924', transparent: true, opacity: 0.96, depthWrite: false }),
-);
-boardMesh.position.z = -0.05;
-boardMesh.renderOrder = 0;
-stage.add(boardMesh);
-const boardEdge = new Stroke({ color: '#2a3647', width: 0.05 });
-boardEdge.set([boardOutline.map((p) => p.setZ(-0.04))]);
-stage.add(boardEdge.obj);
+const board = new Board(stage, BOARD);
+const boardMesh = board.mesh;
 
 const avatar = new Avatar({ subtitleAt: new THREE.Vector3(0, BOARD.y - 0.86, -2.15) });
 classroom.add(avatar.root, avatar.beam, avatar.dot, avatar.subRoot);
+// The teacher stands just left of the board, wherever its edge is.
+const AVATAR_GAP = -1.55 + 8.5 * STAGE_SCALE;
+// Subtitles hang under the board, or under the front edge of its stage.
+const SUB_Z = avatar.subRoot.position.z;
+board.onChange(([w, , d]) => {
+  avatar.root.position.x = -(w / 2 + 0.5) * STAGE_SCALE + AVATAR_GAP;
+  avatar.subRoot.position.z = SUB_Z + d * STAGE_SCALE;
+});
+
+// ── desktop camera: keep the board (and the teacher) in the part of the window
+// the editor panel doesn't cover ──
+function fitCamera() {
+  if (renderer.xr.isPresenting) return;
+  const W = innerWidth, Hh = innerHeight;
+  const panel = document.body.classList.contains('editing') ? $('#panel').getBoundingClientRect() : null;
+  const visW = panel && panel.left > W * 0.35 ? panel.left - 12 : W;
+  if (visW < W) camera.setViewOffset(W, Hh, (W - visW) / 2, 0, W, Hh);
+  else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
+  // Everything that should be in view: the board and stage, the teacher, the subtitles.
+  const box = board.worldBounds();
+  const sub = avatar.subRoot.position;
+  const pts = [];
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) pts.push(new THREE.Vector3(x, y, z));
+  pts.push(new THREE.Vector3(avatar.root.position.x - 0.32, sub.y - 0.12, avatar.root.position.z),
+    new THREE.Vector3(avatar.root.position.x - 0.32, BOARD.y + 0.2, avatar.root.position.z),
+    new THREE.Vector3(sub.x, sub.y - 0.12, sub.z));
+  const lo = new THREE.Vector3().copy(pts[0]), hi = lo.clone();
+  for (const v of pts) { lo.min(v); hi.max(v); }
+  const center = new THREE.Vector3(stage.position.x, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2);
+  const dir = camera.position.clone().sub(controls.target);
+  if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+  dir.normalize();
+  // Smallest distance at which every point lands inside the uncovered part of the window.
+  const xMax = -1 + 2 * visW / W;
+  const fits = (dist) => {
+    camera.position.copy(center).addScaledVector(dir, dist);
+    camera.lookAt(center);
+    camera.updateMatrixWorld();
+    return pts.every((v) => {
+      const p = v.clone().project(camera);
+      return p.z < 1 && p.x > -0.96 && p.x < xMax - 0.04 && Math.abs(p.y) < 0.94;
+    });
+  };
+  let a = 0.5, b = 30;
+  for (let i = 0; i < 30; i++) { const m = (a + b) / 2; if (fits(m)) b = m; else a = m; }
+  controls.target.copy(center);
+  camera.position.copy(center).addScaledVector(dir, b);
+  controls.update();
+}
+board.onChange(() => fitCamera());
 
 // ── UI log ──
 const logEl = $('#log');
@@ -101,7 +143,7 @@ function log(level, msg) {
 
 const voice = new Voice({ camera, speaker: avatar.head, url: new URL(`../tts.wasm${VQ}`, import.meta.url).href, log });
 avatar.level = () => voice.level();
-const runtime = new Runtime({ stage, camera, avatar, voice, log });
+const runtime = new Runtime({ stage, board, camera, avatar, voice, log });
 
 // ── command sources ──
 const status = $('#status');
@@ -111,10 +153,13 @@ function setStatus(s, label) {
 }
 
 let parser = null;
+let fedLines = 0; // lines the local parser has numbered so far (its line numbers keep counting)
 async function localParser() {
   parser ??= await loadParser(new URL(`../vcl.wasm${VQ}`, import.meta.url).href);
   return parser;
 }
+// Commands that come from the editor carry `editorLine`, so playback can mark it.
+let tagEditor = false;
 
 /** Conversation events (from the tutor, tools/tutor) go to the teacher; the rest is IR. */
 function onCmd(cmd) {
@@ -123,7 +168,10 @@ function onCmd(cmd) {
     avatar.hear(`You: ${cmd.text}`);
   } else if (cmd.op === 'status') {
     avatar.thinking = cmd.text === 'thinking';
-  } else runtime.exec(cmd, { instant: cmd.op === 'replay' });
+  } else {
+    if (tagEditor && cmd.line) cmd.editorLine = cmd.line;
+    runtime.exec(cmd, { instant: cmd.op === 'replay' });
+  }
 }
 
 let transport = null;
@@ -141,8 +189,9 @@ if (serverUrl && !params.has('offline') && !isStatic) {
   transport.connect();
 } else setStatus('offline', 'offline · local');
 
-/** Run VCL (or mixed prose) text: through the server if connected, else locally. */
-async function run(text, mode = 'vcl') {
+/** Run VCL (or mixed prose) text: through the server if connected, else locally.
+ *  `fromEditor`: the text is the editor's, so its lines are marked as they play. */
+async function run(text, mode = 'vcl', fromEditor = false) {
   if (!text.endsWith('\n')) text += '\n';
   if (mode === 'vcl' && /^[ \t]*```vcl[ \t]*$/m.test(text)) { // prose + fences pasted as plain VCL
     mode = 'mixed';
@@ -151,13 +200,36 @@ async function run(text, mode = 'vcl') {
   }
   if (transport?.connected) {
     const base = serverUrl.replace(/^ws/, 'http').replace(/\/ws$/, '');
-    const res = await fetch(`${base}/vcl?mode=${mode}`, { method: 'POST', body: text });
-    if (!res.ok) log('error', `server: ${res.status}`);
+    // Each POST is numbered from line 1; its commands arrive over the WebSocket meanwhile.
+    tagEditor = fromEditor;
+    try {
+      const res = await fetch(`${base}/vcl?mode=${mode}`, { method: 'POST', body: text });
+      if (!res.ok) log('error', `server: ${res.status}`);
+    } finally { setTimeout(() => { tagEditor = false; }, 300); }
     return; // commands and diagnostics come back over the WebSocket
   }
   const p = await localParser();
-  if (p.mode !== mode) p.reset(mode);
-  for (const cmd of p.feed(text)) runtime.exec(cmd);
+  if (p.mode !== mode) { p.reset(mode); fedLines = 0; }
+  const base = fedLines;
+  fedLines += (text.match(/\n/g) || []).length;
+  for (const cmd of p.feed(text)) {
+    if (fromEditor && cmd.line) cmd.editorLine = cmd.line - base;
+    runtime.exec(cmd);
+  }
+}
+
+/** Stop playback and wipe the board now (not after what is queued). */
+async function stopAndClear() {
+  runtime.reset();
+  voice.stop();
+  board.apply([16, 9, 0]);
+  avatar.subRoot.visible = false;
+  markLine(0);
+  wasBusy = false; // stopped, not finished
+  play.hidden = true;
+  play.dataset.state = '';
+  if (transport?.connected) await run('clear\nboard\n', 'vcl');
+  else if (parser) { parser.reset(modeSel.value); fedLines = 0; }
 }
 
 // ── asking the teacher (needs the server and a running tutor) ──
@@ -198,13 +270,13 @@ if (Recognition) {
 // ── editor / lessons ──
 const editor = $('#editor');
 const modeSel = $('#mode');
-$('#run').onclick = () => run(editor.value, modeSel.value).catch((e) => log('error', e.message));
-$('#clear').onclick = () => run('clear', 'vcl');
+$('#run').onclick = () => run(editor.value, modeSel.value, true).catch((e) => log('error', e.message));
+$('#clear').onclick = () => stopAndClear().catch((e) => log('error', e.message));
 $('#skip').onclick = () => runtime.timeline.flush();
 editor.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); $('#run').click(); }
 });
-$('#toggle-editor').onclick = () => document.body.classList.toggle('editing');
+$('#toggle-editor').onclick = () => { document.body.classList.toggle('editing'); fitCamera(); };
 $('#voice').value = voice.mode;
 $('#voice').onchange = (e) => voice.setMode(e.target.value);
 const browserOption = $('#voice option[value="browser"]');
@@ -224,7 +296,13 @@ async function loadLesson(name) {
 const lessonSel = $('#lessons');
 fetch(`lessons/index.json${VQ}`).then((r) => r.json()).then((list) => {
   for (const l of list) lessonSel.add(new Option(l.title, l.file));
-  lessonSel.onchange = () => lessonSel.value && loadLesson(lessonSel.value).catch((e) => log('error', e.message));
+  lessonSel.onchange = async () => {
+    if (!lessonSel.value) return;
+    try {
+      if ($('#autoclear').checked) await stopAndClear();
+      await loadLesson(lessonSel.value);
+    } catch (e) { log('error', e.message); }
+  };
 }).catch(() => {});
 
 if (params.has('lesson')) {
@@ -234,10 +312,65 @@ if (params.has('lesson')) {
     await loadLesson(file);
     await voice.loading; // so the first lines are already voiced
     if (transport) await new Promise((r) => { const t = setInterval(() => transport.connected && (clearInterval(t), r()), 50); setTimeout(r, 2000); });
-    await run('clear\n', 'vcl');
-    await run(editor.value, modeSel.value);
+    await run('clear\nboard\n', 'vcl');
+    await run(editor.value, modeSel.value, true);
     if (params.has('skip')) setTimeout(() => runtime.timeline.flush(), 300);
   })().catch((e) => log('error', e.message));
+}
+
+// ── playback: the line being played, running/finished, step-by-step ──
+const curLine = $('#cur-line');
+let markedLine = 0;
+/** Mark editor line n (1-based; 0 hides the mark) and keep it in view. */
+function markLine(n) {
+  markedLine = n;
+  curLine.hidden = !n;
+  if (!n) return;
+  const lh = parseFloat(getComputedStyle(editor).lineHeight) || 19.5;
+  const pad = parseFloat(getComputedStyle(editor).paddingTop) || 10;
+  const y = pad + (n - 1) * lh;
+  if (document.body.classList.contains('editing') && (y < editor.scrollTop || y + lh > editor.scrollTop + editor.clientHeight))
+    editor.scrollTop = Math.max(0, y - editor.clientHeight / 3);
+  curLine.style.height = `${lh}px`;
+  curLine.style.transform = `translateY(${y - editor.scrollTop}px)`;
+}
+editor.addEventListener('scroll', () => markedLine && markLine(markedLine));
+editor.addEventListener('input', () => markLine(0)); // edited: the numbers no longer match
+runtime.timeline.onBegin = (t) => { if (t.cmd?.editorLine) markLine(t.cmd.editorLine); };
+
+function setting(id, key, def, onChange = () => {}) {
+  const el = $(id);
+  try { const v = localStorage.getItem(key); el.checked = v === null ? def : v === '1'; } catch { el.checked = def; }
+  el.onchange = () => { try { localStorage.setItem(key, el.checked ? '1' : '0'); } catch {} onChange(el.checked); };
+  onChange(el.checked);
+}
+setting('#autoclear', 'vcl.autoclear', true);
+setting('#step', 'vcl.step', false, (on) => {
+  runtime.stepping = on;
+  $('#next').hidden = !on;
+  if (!on) runtime.next(); // don't leave a sentence waiting
+});
+$('#next').onclick = () => runtime.next();
+addEventListener('keydown', (e) => {
+  if (e.target.closest?.('textarea, input, select')) return;
+  if ([' ', 'ArrowRight', 'PageDown', 'Enter'].includes(e.key) && runtime.waiting) {
+    e.preventDefault();
+    runtime.next();
+  }
+});
+
+const play = $('#play');
+let wasBusy = false;
+function showPlayState() {
+  const busy = runtime.timeline.busy;
+  const state = runtime.waiting ? 'waiting' : busy ? 'playing' : wasBusy ? 'done' : play.dataset.state;
+  wasBusy = busy;
+  if (state === play.dataset.state) return;
+  play.dataset.state = state;
+  play.hidden = !state;
+  play.textContent = { playing: 'playing', waiting: 'paused · Space for next', done: 'finished' }[state] ?? '';
+  $('#next').classList.toggle('ready', state === 'waiting');
+  if (state === 'done') markLine(0);
 }
 
 // ── XR ──
@@ -286,6 +419,7 @@ for (let i = 0; i < 2; i++) {
   ray.position.z = -0.3;
   c.add(ray);
   c.addEventListener('squeezestart', recenter);
+  c.addEventListener('selectstart', () => runtime.next()); // trigger: next sentence in step mode
   scene.add(c);
 }
 function recenter() {
@@ -328,7 +462,9 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   setLineResolution(innerWidth, innerHeight);
+  fitCamera();
 });
+fitCamera();
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
@@ -336,9 +472,10 @@ renderer.setAnimationLoop(() => {
   if (!renderer.xr.isPresenting) controls.update();
   else readControllers(dt);
   runtime.update(dt);
+  showPlayState();
   avatar.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   renderer.render(scene, camera);
 });
 
 // Exposed for debugging from the console.
-Object.assign(window, { runtime, run, scene, camera, THREE });
+Object.assign(window, { runtime, run, scene, camera, board, THREE });

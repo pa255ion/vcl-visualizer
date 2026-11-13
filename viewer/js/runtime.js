@@ -129,8 +129,12 @@ class Entity {
 // ───────────────────────────── Runtime ─────────────────────────────
 
 export class Runtime {
-  constructor({ stage, camera, avatar = null, voice = null, log = console.log }) {
+  constructor({ stage, board = null, camera, avatar = null, voice = null, log = console.log }) {
     this.stage = stage;
+    this.board = board; // Board (board.js), resized by `board`
+    /** Step mode: hold each `say` after the first of a burst until next(). */
+    this.stepping = false;
+    this.saysInBurst = 0;
     this.camera = camera;
     this.avatar = avatar;
     this.voice = voice;
@@ -148,6 +152,7 @@ export class Runtime {
     if (cmd.op === 'diag') return this.log(cmd.level, `line ${cmd.line}: ${cmd.msg}`);
     if (cmd.op === 'replay') {
       this.reset();
+      this.board?.apply([16, 9, 0]);
       for (const c of cmd.cmds) this.exec(c, { instant: true });
       return;
     }
@@ -160,14 +165,25 @@ export class Runtime {
     task.dur = cmd.dur ?? 0;
     task.par = cmd.par;
     task.ease = cmd.ease;
+    if (!instant && !this.timeline.busy) this.saysInBurst = 0; // a new burst (lesson run, tutor reply)
+    if (cmd.op === 'say' && !instant) {
+      task.gate = this.stepping && !cmd.par && this.saysInBurst > 0;
+      this.saysInBurst++;
+    }
     if (instant) {
       if (cmd.op === 'say' || cmd.op === 'point' || cmd.op === 'wait') return;
       this.timeline.runNow(task);
     } else this.timeline.add(task, this.now());
   }
 
+  /** Step mode: let the next sentence (and what comes with it) play. */
+  next() { return this.timeline.release(this.now()); }
+
+  get waiting() { return !!this.timeline.waiting; }
+
   reset() {
     this.timeline.reset();
+    this.saysInBurst = 0;
     for (const id of [...this.entities.keys()]) this.remove(id);
     this.avatar?.point(null);
   }
@@ -325,6 +341,14 @@ H.say = function (c) {
 };
 H.point = function (c) { return { begin: () => this.avatar?.point(c.at ? this.pointWorld(c.at) : null, c.dur) }; };
 H.title = function (c) { return this.create({ ...c, id: '__title', op: 'title' }); };
+H.board = function (c) {
+  const t = this.board ? this.board.tween(c.size ?? null) : {};
+  const title = () => {
+    const e = this.entities.get('__title');
+    if (e && this.board) e.obj.position.y = this.board.height / 2 - 0.65;
+  };
+  return { ...t, update: (p, raw) => { t.update?.(p, raw); title(); }, finish: () => { t.finish?.(); title(); } };
+};
 
 function fadeOutAndRemove(rt, pick) {
   let list = [], o0 = [];
@@ -655,7 +679,10 @@ function textEntity(e, c, { size = 0.5, weight = 600, tex = false } = {}) {
 }
 BUILD.text = function (e, c) { textEntity(e, c); };
 BUILD.tex = function (e, c) { textEntity(e, c, { tex: true }); };
-BUILD.title = function (e, c) { textEntity(e, { ...c, at: [0, 3.85, 0], size: 0.62 }, { weight: 700 }); };
+BUILD.title = function (e, c) {
+  const top = (this.board?.height ?? 9) / 2;
+  textEntity(e, { ...c, at: [0, top - 0.65, 0], size: 0.62 }, { weight: 700 });
+};
 
 BUILD.node = function (e, c) {
   e.obj.position.copy(e.toParent(c.at));

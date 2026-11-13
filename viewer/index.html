@@ -23,6 +23,10 @@
       <button type="button" id="mic" hidden title="Click, then speak">Talk</button>
     </form>
     <span class="spacer"></span>
+    <span id="play" hidden></span>
+    <button id="next" hidden title="Next sentence (Space, →, or the VR trigger)">Next ▸</button>
+    <label class="check" title="Pause after each sentence and its drawing until you press Space">
+      <input type="checkbox" id="step"> step</label>
     <select id="voice" title="Teacher's voice">
       <option value="robot">robot voice</option>
       <option value="browser">browser voice</option>
@@ -41,11 +45,16 @@
         <option value="mixed">mixed</option>
       </select>
     </div>
-    <textarea id="editor" spellcheck="false" placeholder="ax: axes 0,0 x=-4..4 y=-3..3&#10;plot ax &quot;sin(x)&quot;&#10;say &quot;Here is a sine wave.&quot;"></textarea>
+    <label class="check" title="Selecting another lesson stops the current one and wipes the board">
+      <input type="checkbox" id="autoclear"> clear the board when switching lessons</label>
+    <div id="editor-wrap">
+      <div id="cur-line" hidden></div>
+      <textarea id="editor" wrap="off" spellcheck="false" placeholder="ax: axes 0,0 x=-4..4 y=-3..3&#10;plot ax &quot;sin(x)&quot;&#10;say &quot;Here is a sine wave.&quot;"></textarea>
+    </div>
     <div class="row">
       <button id="run" class="primary" title="Ctrl+Enter">Run</button>
       <button id="skip" title="Finish all pending animation">Skip</button>
-      <button id="clear">Clear</button>
+      <button id="clear" title="Stop and wipe the board now">Clear</button>
     </div>
   </aside>
 

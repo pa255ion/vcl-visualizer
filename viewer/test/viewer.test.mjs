@@ -82,6 +82,27 @@ test('timeline: a failing begin skips only that task', () => {
   assert.deepEqual(log, ['ok']);
 });
 
+test('timeline: a gate holds the rest until release, then everything moves later', () => {
+  const tl = new Timeline((e) => { throw e; });
+  const log = [];
+  const mk = (n, dur, extra = {}) => ({ dur, ...extra, begin: () => log.push(`${n}@${tl.now}`) });
+  tl.add(mk('a', 1), 0);
+  tl.add(mk('say', 1, { gate: true }), 0); // due at 1
+  tl.add(mk('draw', 0.5, { par: true }), 0); // with the say
+  tl.add(mk('next', 0), 0); // due at 2
+  const at = (t) => { tl.now = t; tl.tick(t); };
+  at(0); at(1); at(5);
+  assert.deepEqual(log, ['a@0']);
+  assert.ok(tl.waiting && tl.busy);
+  tl.add(mk('late', 0), 5); // queued while held: still behind the gate, not "now"
+  assert.ok(tl.release(5));
+  at(5); at(5.9);
+  assert.deepEqual(log, ['a@0', 'say@5', 'draw@5']);
+  at(6);
+  assert.deepEqual(log, ['a@0', 'say@5', 'draw@5', 'next@6', 'late@6']);
+  assert.ok(!tl.busy && !tl.release(6));
+});
+
 const ttsWasm = new URL('../tts.wasm', import.meta.url);
 test('tts.wasm: speech with an exact duration', { skip: !existsSync(ttsWasm) && 'run `zig build` first' }, async () => {
   const { instance } = await WebAssembly.instantiate(readFileSync(ttsWasm), {});

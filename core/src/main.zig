@@ -158,6 +158,8 @@ const Hub = struct {
     clients: std.ArrayList(*Client) = .empty,
     /// IR lines needed to rebuild the current scene (since the last `clear`).
     log: std.ArrayList([]u8) = .empty,
+    /// The last `board` line: it outlives `clear`, so it starts every replay log.
+    board: ?[]u8 = null,
 
     fn lock(h: *Hub) void {
         h.mutex.lockUncancelable(h.io);
@@ -194,7 +196,12 @@ const Hub = struct {
         if (std.mem.eql(u8, name, "clear")) {
             for (h.log.items) |l| h.gpa.free(l);
             h.log.clearRetainingCapacity();
+            if (h.board) |b| try h.log.append(h.gpa, try h.gpa.dupe(u8, b));
             return;
+        }
+        if (std.mem.eql(u8, name, "board")) {
+            if (h.board) |b| h.gpa.free(b);
+            h.board = try h.gpa.dupe(u8, line);
         }
         const op = vcl.findOp(name) orelse return;
         if (!op.replay) return;

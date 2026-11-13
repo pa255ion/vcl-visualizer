@@ -31,7 +31,7 @@ so wires and arrows attach to the right spot without the model computing
 coordinates, and wires drawn between pins follow the parts when they move.
 
 Not there yet:
-- Automatic layout: the model chooses coordinates. Lint warnings catch blocks
+- Automatic layout: the model chooses coordinates (on a board it can enlarge with `board`). Lint warnings catch blocks
   that are too small, and text, panels, blocks, waves and nodes that run off
   the board or onto each other; labels, lines, shapes and LaTeX aren't checked.
 - Smart wire routing: the routes are simple right-angle shapes. A wire doubling

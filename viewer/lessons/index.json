@@ -1,5 +1,9 @@
 [
   {
+    "file": "garden.vcl",
+    "title": "Lissajous garden (big board, stage, parallel drawing)"
+  },
+  {
     "file": "half-adder.vcl",
     "title": "Half adder (gates, truth table, timing)"
   },

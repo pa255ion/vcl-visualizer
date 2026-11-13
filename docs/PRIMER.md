@@ -7,15 +7,17 @@ short prose and short fences: say something, show it, say the next thing.
 
 **Syntax:** `[&] [name:] op args key=value  # comment`
 - One command per line. `name:` lets you refer to it later. `&` = start with the previous line instead of after it.
+- Lines between `par` and `end` (each alone on a line) all start at once; the next line waits for the longest.
 - Points: `x,y` or `x,y,z`, or a name (`A`), an anchor (`A.top`, `l.end`), with offset (`A.top+0,0.4`).
 - Strings in double quotes, followed by a space. Symbols like µ × ≈ are fine on the board; in spoken prose write them as words. For multi-line text (code, tables, inline SVG) end the line with `<<END`, then the lines, then a line `END`.
 - Colours: `red orange yellow green teal cyan blue purple pink white gray` or `#rrggbb`.
 - Board: x −8…8, y −4.5…4.5, origin centre; the title sits at y≈3.9. +z comes toward the learner.
+- Need room? `board 24,13` makes it 24×13 (x −12…12, y −6.5…6.5); `board 24,13,6` adds a stage 6 deep in front for 3D things (stand them on y=−6.5, z 0…6). Bare `board` restores 16,9. `clear` keeps the size.
 - Every op takes `dur=` seconds. Drawing ops also take `color= opacity= label="…" fx=draw|fade|grow|pop|none on=AXES`.
 
 **Ops**
 ```
-title "S"                      say "S"            wait N            clear          del a b
+title "S"                      say "S"            wait N            clear          del a b        board W,H[,D]
 point P | point                (teacher points at P; bare `point` stops)
 pt P size=N                    line P P           arrow P P head=both          path P P P… smooth=true closed=true
 poly P P P… fill=C             rect P w,h fill=C radius=N              circle P r fill=C

@@ -25,6 +25,7 @@ export fn vcl_free(p: [*]u8, n: usize) void {
 
 export fn vcl_reset(mode: u32) void {
     scene.reset();
+    scene.board = vcl.default_board;
     stream.deinit(gpa);
     stream = .{ .mode = if (mode == 1) .mixed else .vcl };
 }

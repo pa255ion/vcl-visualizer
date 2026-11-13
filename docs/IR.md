@@ -33,7 +33,7 @@ animation, no timeline) after clearing your scene.
 | `op` | opcode (same names as VCL) |
 | `id` | entity name; present on everything that creates something (`_N` if auto-assigned) |
 | `line` | source line number (for error messages) |
-| `par` | start together with the previous command |
+| `par` | start together with the previous command (also set on every line after the first in a `par` … `end` block) |
 | `dur` | seconds; always present |
 | `ease` | `linear in out inout`; absent means `inout` |
 
@@ -88,6 +88,12 @@ length **when the command arrives**, before scheduling it.
 Resolve point references **when the command starts**, not when it arrives.
 `viewer/js/timeline.js` is the reference implementation (about 80 lines).
 
+Step-by-step playback (optional): hold a non-`par` `say` once its start time
+comes, until the learner asks for the next step, then shift it and everything
+queued behind it by the time spent waiting. Commands that arrive meanwhile are
+scheduled from `T` as usual, not from `now`. The WebXR viewer holds every `say`
+after the first of a burst (a burst ends when the timeline runs empty).
+
 ## Pins
 
 Parts, blocks, code, tables and timing diagrams expose named pins. The parser
@@ -98,8 +104,16 @@ defined in `viewer/js/parts.js`, whose names must match `part_pins` in
 
 ## Coordinates
 
-Board units: x −8…8, y −4.5…4.5, +z toward the viewer. The WebXR viewer uses
-1 unit = 0.15 m with the board centre 2.3 m ahead at 1.55 m height. Entities
+Board units: x −8…8, y −4.5…4.5 by default, +z toward the viewer. The WebXR
+viewer uses 1 unit = 0.15 m with the default board's centre 2.3 m ahead at
+1.55 m height.
+
+`{"op":"board","size":[W,H,D]}` resizes the board to W×H (x −W/2…W/2, y
+−H/2…H/2) with a stage D deep in front of it (D = 0: none); without `size`,
+back to [16,9,0]. Animate over `dur`. The WebXR viewer keeps the board's bottom
+edge in place (it grows upwards) and the title at y = H/2 − 0.65. A `board` is
+replayed after `clear`, so the server's replay log starts with the last one;
+a `replay` resets the board to the default before running its commands. Entities
 with `on` are children of that axes entity and their literal points are axes
 data coordinates; on 3D axes, data (x, y, z) maps to board (x, z-up, −y).
 

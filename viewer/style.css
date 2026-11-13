@@ -35,9 +35,14 @@ button.primary { background: #1d4a5a; border-color: #2c6b80; }
   border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(6px); }
 body.editing #panel { display: flex; }
 #panel .row { display: flex; gap: 8px; }
-#panel .row select:first-child { flex: 1; }
-#editor { flex: 1; resize: none; width: 100%; background: #0b1018; color: var(--fg); border: 1px solid var(--line);
-  border-radius: 8px; padding: 10px; font: 13px/1.5 ui-monospace, "JetBrains Mono", monospace; tab-size: 2; }
+#panel .row select:first-child { flex: 1; min-width: 0; }
+#editor-wrap { flex: 1; position: relative; min-height: 0; border-radius: 8px; background: #0b1018; overflow: hidden; }
+#editor { position: absolute; inset: 0; resize: none; width: 100%; height: 100%; background: transparent; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: 13px/1.5 ui-monospace, "JetBrains Mono", monospace;
+  tab-size: 2; white-space: pre; overflow: auto; }
+#cur-line { position: absolute; left: 1px; right: 1px; top: 0; background: #1d4a5a88; border-left: 3px solid var(--accent);
+  pointer-events: none; transition: transform .15s ease-out; }
+#cur-line[hidden] { display: none; }
 
 #log { position: fixed; left: 12px; bottom: 12px; margin: 0; padding: 0; list-style: none; max-height: 30vh;
   width: min(520px, calc(100vw - 24px)); overflow: auto; font: 12px/1.45 ui-monospace, monospace; }
@@ -45,3 +50,15 @@ body.editing #panel { display: flex; }
 #log li.error { border-left-color: var(--err); }
 #log li.warning { border-left-color: var(--warn); }
 body.editing #log { right: auto; }
+
+#play { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
+#play[hidden] { display: none; }
+#play::before { content: "■"; margin-right: 6px; }
+#play[data-state="playing"] { color: var(--fg); }
+#play[data-state="playing"]::before { content: "▶"; color: var(--ok); animation: blink 1.2s ease-in-out infinite; }
+#play[data-state="waiting"] { color: var(--fg); border-color: var(--accent); }
+#play[data-state="waiting"]::before { content: "❚❚"; color: var(--accent); }
+#play[data-state="done"]::before { content: "✓"; color: var(--ok); }
+#next.ready { border-color: var(--accent); background: #1d4a5a; animation: glow 1.4s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+@keyframes glow { 50% { box-shadow: 0 0 0 3px #7fe3ff44; } }

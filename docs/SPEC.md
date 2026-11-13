@@ -84,6 +84,14 @@ front of the learner: `x` from −8 (left) to 8 (right), `y` from −4.5 (bottom
 to 4.5 (top), origin at the centre. `+z` comes out of the board toward the
 learner, so 3D objects can float in front of it. One unit is about 15 cm.
 
+`board W,H[,D]` resizes the board to W×H units (x −W/2…W/2, y −H/2…H/2; width
+8–40, height 4.5–24). It grows sideways and upwards: the bottom edge stays put.
+D > 0 (up to 24) adds a **stage**: a floor D units deep at the board's foot,
+for 3D content that comes toward the learner (z from 0 to D, standing on
+y = −H/2). Bare `board` goes back to 16,9 with no stage. `clear` keeps the
+board's size; the off-board lint follows it. The desktop viewer moves its
+camera so the whole board stays in view.
+
 `on=AXES` on any drawing op means "my coordinates are data coordinates of that
 axes", and the entity becomes a child of the axes (it moves with them).
 
@@ -95,13 +103,30 @@ cursor:
 * A normal command starts when the previous command finishes (or now, if the
   stream has fallen behind real time), and moves the cursor to its own end.
 * A command prefixed with `&` starts at the same time as the previous one.
+* Lines between `par` and `end` (each alone on its line) all start together,
+  as if every command after the first had `&`. The command after `end` waits
+  for the longest of them. Blocks don't nest; a block left open closes at the
+  end of its ```` ```vcl ```` fence (with a warning).
 * `wait N` moves the cursor N seconds forward.
 * `say` lasts as long as it takes to speak (≈ 0.4 s per word) unless `dur=` is given.
   A renderer with real speech synthesis replaces that estimate with the audio's
   length (the WebXR viewer does).
 
-So a lesson reads like a script: one beat after another, with `&` to bundle
-things that should happen together.
+So a lesson reads like a script: one beat after another, with `&` or
+`par` … `end` to bundle things that should happen together.
+
+```
+par
+c1: plot L1 "sin(3t)" "sin(2t)" t=0..6.2832 dur=4
+c2: plot L2 "sin(5t)" "sin(4t)" t=0..6.2832 dur=4
+text 0,-2 "two at once"
+end
+say "Both curves were drawn together."
+```
+
+Viewers may offer step-by-step playback: each `say` after the first of a burst
+waits for the learner (Space, a button or the VR trigger), so a sentence and the
+drawing that goes with it play as one step.
 
 `ease=` controls animation curves: `linear in out inout` (default `inout`).
 
@@ -124,7 +149,9 @@ Every drawing op accepts: `color=C` `opacity=N` `fx=draw|fade|grow|pop|none`
 | `say` | `S` | The teacher says this (subtitle + speech bubble; TTS later). |
 | `point` | `[P]` | The teacher looks and points at a point/entity; no argument stops pointing. |
 | `title` | `S` | Heading across the top of the board. Replaces the previous title. |
-| `clear` | | Fade out everything on the board. |
+| `clear` | | Fade out everything on the board (its size stays). |
+| `board` | `[V]` | Resize the board to W,H[,D] units (§2); bare `board` restores 16,9. |
+| `par` … `end` | | Not ops but block lines: everything between starts together (§3). |
 | `del` | `ID…` | Remove entities. |
 
 ### 4.3 2D drawing

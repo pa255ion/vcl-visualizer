@@ -94,6 +94,7 @@ pub const ops = [_]Op{
     .{ .name = "point", .kind = .flow, .pos = &.{.{ .name = "at", .ty = .point, .opt = true }}, .dur = 0.4, .replay = false },
     .{ .name = "title", .kind = .flow, .pos = &.{P("text", .str)}, .dur = 0.5 },
     .{ .name = "clear", .kind = .flow, .dur = 0.5 },
+    .{ .name = "board", .kind = .flow, .pos = &.{.{ .name = "size", .ty = .vec, .opt = true }}, .dur = 0.8 },
     .{ .name = "del", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0.3 },
     // 2D
     .{ .name = "pt", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{size}, .dur = 0.3 },
@@ -158,6 +159,10 @@ pub fn findOp(name: []const u8) ?*const Op {
     return null;
 }
 
+pub const default_board: Vec3 = .{ 16, 9, 0 };
+pub const board_min: Vec3 = .{ 8, 4.5, 0 };
+pub const board_max: Vec3 = .{ 40, 24, 24 };
+
 pub const Anchor = enum { center, top, bottom, left, right, front, back, start, end };
 
 pub const named_colors = [_]struct { []const u8, u24 }{
@@ -213,6 +218,11 @@ pub const Scene = struct {
     gpa: Allocator,
     names: std.StringArrayHashMapUnmanaged(Entity) = .empty,
     auto_id: u32 = 0,
+    /// Usable board area (x -w/2..w/2, y -h/2..h/2) and the depth of the stage in
+    /// front of it; set by `board`, kept by `clear`.
+    board: Vec3 = default_board,
+    /// Set by `Stream` for the lines of a `par` … `end` block after the first.
+    force_par: bool = false,
 
     pub fn init(gpa: Allocator) Scene {
         return .{ .gpa = gpa };
@@ -375,7 +385,7 @@ const LineParser = struct {
         var toks = try p.tokenize(line);
         if (toks.len == 0) return;
 
-        var par = false;
+        var par = p.scene.force_par;
         var name: ?[]const u8 = null;
 
         // '&' prefix, alone or glued to the next token.
@@ -518,6 +528,18 @@ const LineParser = struct {
             dur = fields.items[0].val.num;
         }
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
+        if (std.mem.eql(u8, op.name, "board")) {
+            var b = default_board;
+            if (fields.items.len > 0) {
+                b = fields.items[0].val.vec;
+                for (0..3) |k| if (b[k] < board_min[k] or b[k] > board_max[k]) {
+                    const axis = [_][]const u8{ "width", "height", "depth" };
+                    return p.fail("board: {s} {d} is out of range ({d}..{d}); the default is 16,9 (and depth 0)", .{ axis[k], b[k], board_min[k], board_max[k] });
+                };
+                fields.items[0].val.vec = b;
+            }
+            p.scene.board = b;
+        }
         const box: ?[4]f64 = if (on == null) try p.lintBounds(fields.items) else null;
         if (std.mem.eql(u8, op.name, "group")) {
             for (fields.items[0].val.list) |v| if (std.mem.eql(u8, v.id, name.?))
@@ -925,32 +947,34 @@ const LineParser = struct {
             x0 = at[0] - w / 2;
         } else return null;
         const tol = 0.05;
+        const bx = p.scene.board[0] / 2;
+        const by = p.scene.board[1] / 2;
         const x1 = x0 + w;
         const y0 = at[1] - h / 2;
         const y1 = at[1] + h / 2;
         var edges: [4][]const u8 = undefined;
         var ne: usize = 0;
-        if (x0 < -8 - tol) {
+        if (x0 < -bx - tol) {
             edges[ne] = "left";
             ne += 1;
         }
-        if (x1 > 8 + tol) {
+        if (x1 > bx + tol) {
             edges[ne] = "right";
             ne += 1;
         }
-        if (y1 > 4.5 + tol) {
+        if (y1 > by + tol) {
             edges[ne] = "top";
             ne += 1;
         }
-        if (y0 < -4.5 - tol) {
+        if (y0 < -by - tol) {
             edges[ne] = "bottom";
             ne += 1;
         }
         const box: [4]f64 = .{ x0, y0, x1, y1 };
         if (ne == 0) return box;
         const which = try std.mem.join(p.arena, " and ", edges[0..ne]);
-        const fix = if (w > 16 or h > 9) "make it smaller (size=) or split it" else "move it inward, shorten it or reduce size=";
-        try p.warn("{s}: about {d:.1}x{d:.1}, spanning x {d:.1}..{d:.1}, y {d:.1}..{d:.1}: it runs off the {s} of the board (x -8..8, y -4.5..4.5); {s}", .{ op, w, h, x0, x1, y0, y1, which, fix });
+        const fix = if (w > 2 * bx or h > 2 * by) "make it smaller (size=), split it, or enlarge the board (board W,H)" else "move it inward, shorten it or reduce size=";
+        try p.warn("{s}: about {d:.1}x{d:.1}, spanning x {d:.1}..{d:.1}, y {d:.1}..{d:.1}: it runs off the {s} of the board (x {d}..{d}, y {d}..{d}); {s}", .{ op, w, h, x0, x1, y0, y1, which, -bx, bx, -by, by, fix });
         return box;
     }
 
@@ -1085,6 +1109,10 @@ pub const Stream = struct {
     here_body: std.ArrayList(u8) = .empty,
     here_line: u32 = 0,
     warned_cmd: bool = false, // mixed mode: told once that a command sat outside a fence
+    // `par` … `end`: every command in the block starts together.
+    par: enum { off, first, rest } = .off,
+    par_line: u32 = 0,
+    here_par: bool = false, // the open <<TAG block's command is inside a par block (after its first)
 
     const max_block = 256 * 1024;
 
@@ -1129,6 +1157,10 @@ pub const Stream = struct {
             st.pending.clearRetainingCapacity();
             try st.line(scene, full, out);
         }
+        if (st.par != .off) {
+            try diagLevel(out, "warning", st.par_line, "par block never closed: end it with a line containing only end");
+            st.par = .off;
+        }
         if (st.here_tag.items.len > 0) {
             var buf: [160]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "<<{s} block never closed: end it with a line containing only {s}", .{ st.here_tag.items, st.here_tag.items }) catch "<< block never closed";
@@ -1145,6 +1177,8 @@ pub const Stream = struct {
         if (st.here_tag.items.len > 0) {
             if (std.mem.eql(u8, std.mem.trim(u8, text, " \t"), st.here_tag.items)) {
                 const body = std.mem.trimEnd(u8, st.here_body.items, "\n");
+                scene.force_par = st.here_par;
+                defer scene.force_par = false;
                 try scene.commandBody(st.here_head.items, body, st.here_line, out);
                 st.closeBlock();
             } else if (st.here_body.items.len + text.len > max_block) {
@@ -1169,6 +1203,10 @@ pub const Stream = struct {
                 .none => if (std.mem.eql(u8, lang, "vcl")) .vcl else .other,
                 else => .none,
             };
+            if (st.fence == .none and st.par != .off) {
+                try diagLevel(out, "warning", st.par_line, "par block still open at the end of the ```vcl fence; closed it there (end it with a line containing only end)");
+                st.par = .off;
+            }
             return;
         }
         switch (st.fence) {
@@ -1207,15 +1245,47 @@ pub const Stream = struct {
     }
 
     fn vclLine(st: *Stream, scene: *Scene, text: []const u8, out: *Writer) (Writer.Error || Allocator.Error)!void {
+        const word = bareWord(text);
+        if (std.mem.eql(u8, word, "par")) {
+            if (st.par != .off) {
+                var buf: [96]u8 = undefined;
+                return diag(out, st.line_no, std.fmt.bufPrint(&buf, "par: a par block is already open (since line {d}); par blocks don't nest", .{st.par_line}) catch "par: already open");
+            }
+            st.par = .first;
+            st.par_line = st.line_no;
+            return;
+        }
+        if (std.mem.eql(u8, word, "end")) {
+            if (st.par == .off) return diag(out, st.line_no, "end: no par block is open");
+            st.par = .off;
+            return;
+        }
+        const is_cmd = word.len > 0 or blk: {
+            const t = std.mem.trim(u8, text, " \t");
+            break :blk t.len > 0 and t[0] != '#';
+        };
+        const together = st.par == .rest;
+        if (is_cmd and st.par == .first) st.par = .rest;
         if (blockStart(text)) |b| {
             try st.here_tag.appendSlice(scene.gpa, b.tag);
             try st.here_head.appendSlice(scene.gpa, b.head);
             st.here_line = st.line_no;
+            st.here_par = together;
             return;
         }
+        scene.force_par = together;
+        defer scene.force_par = false;
         return scene.command(text, st.line_no, out);
     }
 };
+
+/// The line's only word (ignoring spaces and a trailing # comment), or "" if it has none or several.
+fn bareWord(text: []const u8) []const u8 {
+    const code = std.mem.sliceTo(text, '#');
+    const t = std.mem.trim(u8, code, " \t\r");
+    if (std.mem.indexOfAny(u8, t, " \t") != null) return "";
+    return t;
+}
 
 /// Words that read like a sentence: 4+ plain tokens ending in punctuation,
 /// or a first word with an apostrophe (Let's, It's).
@@ -1811,4 +1881,68 @@ test "block size lint warns before things overlap" {
         \\{"op":"block","id":"ok","line":2,"par":false,"dur":0.6,"at":[0,2,0],"size":[2.4,1.2,0],"text":"PC","in":"next","out":"addr"}
         \\
     );
+}
+
+test "board: resizing widens the lint bounds and survives clear" {
+    try expectOut(
+        \\board 24,13.5,6
+        \\clear
+        \\text 10,5.5 "fits now"
+        \\board
+        \\text 10,-5.5 "too far"
+        \\board 50,9
+    ,
+        \\{"op":"board","line":1,"par":false,"dur":0.8,"size":[24,13.5,6]}
+        \\{"op":"clear","line":2,"par":false,"dur":0.5}
+        \\{"op":"text","id":"_1","line":3,"par":false,"dur":0.5,"at":[10,5.5,0],"text":"fits now"}
+        \\{"op":"board","line":4,"par":false,"dur":0.8}
+        \\{"op":"diag","level":"warning","line":5,"msg":"text: about 1.6x0.7, spanning x 9.2..10.8, y -5.9..-5.1: it runs off the right and bottom of the board (x -8..8, y -4.5..4.5); move it inward, shorten it or reduce size="}
+        \\{"op":"text","id":"_2","line":5,"par":false,"dur":0.5,"at":[10,-5.5,0],"text":"too far"}
+        \\{"op":"diag","level":"error","line":6,"msg":"board: width 50 is out of range (8..40); the default is 16,9 (and depth 0)"}
+        \\
+    );
+}
+
+test "par blocks: every command after the first starts with it" {
+    try expectOut(
+        \\a: pt 0,0
+        \\par  # all at once
+        \\move a 1,1
+        \\# a comment doesn't count as the first
+        \\b: pt 2,2
+        \\c: code 0,-3 <<END
+        \\x = 1
+        \\END
+        \\end
+        \\pt 3,3
+        \\end
+        \\par
+        \\par
+    ,
+        \\{"op":"pt","id":"a","line":1,"par":false,"dur":0.3,"at":[0,0,0]}
+        \\{"op":"move","line":3,"par":false,"dur":0.6,"target":"a","to":[1,1,0]}
+        \\{"op":"pt","id":"b","line":5,"par":true,"dur":0.3,"at":[2,2,0]}
+        \\{"op":"code","id":"c","line":6,"par":true,"dur":0.6,"at":[0,-3,0],"text":"x = 1"}
+        \\{"op":"pt","id":"_1","line":10,"par":false,"dur":0.3,"at":[3,3,0]}
+        \\{"op":"diag","level":"error","line":11,"msg":"end: no par block is open"}
+        \\{"op":"diag","level":"error","line":13,"msg":"par: a par block is already open (since line 12); par blocks don't nest"}
+        \\{"op":"diag","level":"warning","line":12,"msg":"par block never closed: end it with a line containing only end"}
+        \\
+    );
+}
+
+test "par blocks close at the end of a mixed-mode fence" {
+    const got = try runLines(
+        \\Look.
+        \\```vcl
+        \\par
+        \\a: pt 0,0
+        \\b: pt 1,1
+        \\```
+        \\Done.
+        \\
+    , .mixed);
+    defer testing.allocator.free(got);
+    try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"b\",\"line\":5,\"par\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "par block still open at the end of the ```vcl fence") != null);
 }
