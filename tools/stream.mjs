@@ -11,11 +11,11 @@ const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--') && !/^\d+$/.test(a) && !a.startsWith('ws'));
 if (!file) { console.error('usage: stream.mjs FILE [--mixed] [--cps N] [--url WS]'); process.exit(2); }
 const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : def; };
-const mixed = args.includes('--mixed') || file.endsWith('.md');
+const text = readFileSync(file, 'utf8');
+const mixed = args.includes('--mixed') || file.endsWith('.md') || /^[ \t]*```vcl[ \t]*$/m.test(text);
 const cps = Number(opt('--cps', 80)); // characters per second (~20 tokens/s)
 const url = `${opt('--url', 'ws://127.0.0.1:8080/ws')}?listen=0&mode=${mixed ? 'mixed' : 'vcl'}`;
 
-const text = readFileSync(file, 'utf8');
 const ws = new WebSocket(url);
 let opened = false;
 ws.onerror = () => { if (!opened) { console.error(`could not connect to ${url}`); process.exit(1); } };

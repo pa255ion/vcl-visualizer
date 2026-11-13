@@ -144,6 +144,11 @@ if (serverUrl && !params.has('offline') && !isStatic) {
 /** Run VCL (or mixed prose) text: through the server if connected, else locally. */
 async function run(text, mode = 'vcl') {
   if (!text.endsWith('\n')) text += '\n';
+  if (mode === 'vcl' && /^[ \t]*```vcl[ \t]*$/m.test(text)) { // prose + fences pasted as plain VCL
+    mode = 'mixed';
+    $('#mode').value = 'mixed';
+    log('info', 'this text has ```vcl fences, so it runs in mixed mode (prose is spoken)');
+  }
   if (transport?.connected) {
     const base = serverUrl.replace(/^ws/, 'http').replace(/\/ws$/, '');
     const res = await fetch(`${base}/vcl?mode=${mode}`, { method: 'POST', body: text });

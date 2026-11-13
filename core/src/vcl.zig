@@ -117,7 +117,7 @@ pub const ops = [_]Op{
         P("arrow", .boolean), P("bus", .num), width, dash,
     }, .dur = 0.5 },
     .{ .name = "block", .kind = .draw, .pos = &.{ P("at", .point), P("size", .vec), .{ .name = "text", .ty = .str, .opt = true } }, .keys = &.{
-        P("in", .str), P("out", .str), P("top", .str), P("bottom", .str), fill,
+        P("in", .str), P("out", .str), P("top", .str), P("bottom", .str), fill, P("flip", .boolean),
     }, .dur = 0.6 },
     .{ .name = "frame", .kind = .draw, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .keys = &.{ P("title", .str), P("pad", .num), dash, fill }, .dur = 0.5 },
     .{ .name = "code", .kind = .draw, .pos = &.{ P("at", .point), P("text", .str) }, .keys = &.{
@@ -131,7 +131,7 @@ pub const ops = [_]Op{
         P("grid", .boolean), P("ticks", .boolean), P("xlabel", .str),  P("ylabel", .str),
         P("zlabel", .str),
     }, .dur = 1.0 },
-    .{ .name = "plot", .kind = .draw, .pos = &.{ .{ .name = "axes", .ty = .id, .of_op = "axes" }, .{ .name = "exprs", .ty = .str, .many = true, .max = 3 } }, .keys = &.{ P("x", .range), P("t", .range), width }, .dur = 1.2 },
+    .{ .name = "plot", .kind = .draw, .pos = &.{ .{ .name = "axes", .ty = .id, .of_op = "axes" }, .{ .name = "exprs", .ty = .str, .many = true, .max = 3 } }, .keys = &.{ P("x", .range), P("t", .range), width, dash }, .dur = 1.2 },
     .{ .name = "surf", .kind = .draw, .pos = &.{ .{ .name = "axes", .ty = .id, .of_op = "axes" }, P("expr", .str) }, .keys = &.{ P("x", .range), P("y", .range), P("res", .num), fill, wire }, .dur = 1.2 },
     // 3D
     .{ .name = "box", .kind = .draw, .pos = &.{ P("at", .point), P("size", .vec) }, .keys = &.{wire}, .dur = 0.6 },
@@ -352,7 +352,12 @@ const LineParser = struct {
                 if (in_str) {
                     if (ch == '\\' and i + 1 < line.len) {
                         i += 1;
-                    } else if (ch == '"') in_str = false;
+                    } else if (ch == '"') {
+                        in_str = false;
+                        // A string ends the token: `"a": "b"` is a typo, not one value.
+                        if (i + 1 < line.len and !(line[i + 1] == ' ' or line[i + 1] == '\t' or line[i + 1] == '\r'))
+                            return p.fail("unexpected '{c}' right after the closing quote at column {d} (a quoted string must be followed by a space)", .{ line[i + 1], i + 1 });
+                    }
                 } else if (ch == '"') {
                     in_str = true;
                 } else if (ch == ' ' or ch == '\t' or ch == '\r') break;
@@ -396,6 +401,8 @@ const LineParser = struct {
         p.op = findOp(op_name) orelse {
             var names: [ops.len][]const u8 = undefined;
             for (ops, 0..) |o, i| names[i] = o.name;
+            if (looksLikeProse(toks))
+                return p.fail("unknown command '{s}': this line looks like prose; text that mixes prose and ```vcl fences must be sent with mode=mixed", .{op_name});
             if (suggest(op_name, &names)) |s|
                 return p.fail("unknown command '{s}' (did you mean '{s}'?)", .{ op_name, s });
             return p.fail("unknown command '{s}'", .{op_name});
@@ -508,6 +515,7 @@ const LineParser = struct {
             dur = fields.items[0].val.num;
         }
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
+        if (on == null) try p.lintBounds(fields.items);
         if (std.mem.eql(u8, op.name, "group")) {
             for (fields.items[0].val.list) |v| if (std.mem.eql(u8, v.id, name.?))
                 return p.fail("group: '{s}' can't contain itself", .{v.id});
@@ -571,14 +579,31 @@ const LineParser = struct {
                 }
                 ports = all.items;
             } else if (std.mem.eql(u8, op.name, "wave")) {
-                // Signals by name (when the name is a plain identifier): w.clk
+                // Signals are pins under their identifier form: "FIFO write" → w.FIFO_write, d[7:0] → w.d.
                 var all: std.ArrayList(u8) = .empty;
                 for (fields.items) |f| if (std.mem.eql(u8, f.name, "rows")) for (f.val.list) |row| {
-                    const colon = std.mem.lastIndexOfScalar(u8, std.mem.sliceTo(row.str, '|'), ':') orelse continue;
-                    const nm = std.mem.trim(u8, row.str[0..colon], " ");
-                    if (!isIdent(nm) or std.meta.stringToEnum(Anchor, nm) != null) continue;
+                    const head = std.mem.sliceTo(row.str, '|');
+                    const colon = std.mem.lastIndexOfScalar(u8, head, ':');
+                    const pat = if (colon) |c| head[c + 1 ..] else head;
+                    for (pat) |ch| if (std.mem.indexOfScalar(u8, "01zxpn=.23456789 \t", ch) == null)
+                        return p.fail("wave: unknown symbol '{c}' in \"{s}\" (use 0 1 z x . = p n, after 'name:')", .{ ch, row.str });
+                    const nm = std.mem.trim(u8, head[0 .. colon orelse 0], " ");
+                    if (nm.len == 0) continue;
+                    const pin = try wavePin(p.arena, nm);
+                    if (pin.len == 0 or std.meta.stringToEnum(Anchor, pin) != null) {
+                        try p.warn("wave: signal '{s}' gets no pin (point at it with an offset from the wave instead, or rename it)", .{nm});
+                        continue;
+                    }
+                    var dup = std.mem.splitScalar(u8, all.items, ',');
+                    const seen = while (dup.next()) |d| {
+                        if (std.mem.eql(u8, d, pin)) break true;
+                    } else false;
+                    if (seen) {
+                        try p.warn("wave: signals '{s}' and an earlier one share the pin '{s}'; only the first gets it", .{ nm, pin });
+                        continue;
+                    }
                     if (all.items.len > 0) try all.append(p.arena, ',');
-                    try all.appendSlice(p.arena, nm);
+                    try all.appendSlice(p.arena, pin);
                 };
                 ports = all.items;
             }
@@ -768,6 +793,136 @@ const LineParser = struct {
             try p.warn("block: {d:.1}x{d:.1} is too small for its title and ports (they will overlap); try at least {d:.1}x{d:.1}", .{ w, h, @max(w, need_w), @max(h, need_h) });
     }
 
+    /// Warn when text, a panel, a block or a wave placed at board coordinates
+    /// would run off the board (x −8…8, y −4.5…4.5). Sizes are estimates of
+    /// what the viewer draws (proportional glyphs ~0.45 em, monospace ~0.6 em),
+    /// checked against the renderer in Chromium.
+    fn lintBounds(p: *LineParser, fields: anytype) Error!void {
+        const op = p.op.name;
+        const at = for (fields) |f| {
+            if (std.mem.eql(u8, f.name, "at")) switch (f.val) {
+                .point => |pt| switch (pt) {
+                    .abs => |v| break v,
+                    else => return,
+                },
+                else => return,
+            };
+        } else return;
+        const num = struct {
+            fn get(fs: anytype, name: []const u8) ?f64 {
+                for (fs) |f| if (std.mem.eql(u8, f.name, name)) return switch (f.val) {
+                    .num => |n| n,
+                    else => null,
+                };
+                return null;
+            }
+            fn of(x: usize) f64 {
+                return @floatFromInt(x);
+            }
+            /// Widest line in characters (UTF-8 code points) and the number of lines.
+            fn lines(text: []const u8) struct { w: usize, n: usize } {
+                var it = std.mem.splitScalar(u8, text, '\n');
+                var w: usize = 0;
+                var n: usize = 0;
+                while (it.next()) |l| {
+                    w = @max(w, std.unicode.utf8CountCodepoints(l) catch l.len);
+                    n += 1;
+                }
+                return .{ .w = w, .n = n };
+            }
+        };
+        const f = num.of;
+        var w: f64 = 0;
+        var h: f64 = 0;
+        var x0: f64 = undefined; // left edge
+        if (std.mem.eql(u8, op, "text")) {
+            const s = num.get(fields, "size") orelse 0.45;
+            const l = num.lines(fieldStr(fields, "text") orelse "");
+            w = f(l.w) * 0.45 * s + 0.4 * s;
+            h = f(l.n) * 1.2 * s + 0.4 * s;
+            const al = fieldStr(fields, "align") orelse "center";
+            x0 = if (al[0] == 'l') at[0] else if (al[0] == 'r') at[0] - w else at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "code")) {
+            const s = num.get(fields, "size") orelse 0.36;
+            const l = num.lines(fieldStr(fields, "text") orelse "");
+            const gutter: usize = std.math.log10_int(@max(l.n, 1)) + 3; // digits + 2
+            w = f(l.w + gutter + 2) * 0.43 * s;
+            h = (f(l.n) + 0.86 + (if (fieldStr(fields, "title") != null) @as(f64, 1.2) else 0)) * s;
+            x0 = at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "table")) {
+            const s = num.get(fields, "size") orelse 0.5;
+            var cols: [32]usize = @splat(0);
+            var ncol: usize = 0;
+            var nrow: usize = 0;
+            for (fields) |fd| if (std.mem.eql(u8, fd.name, "rows")) for (fd.val.list) |row| {
+                nrow += 1;
+                var it = std.mem.splitScalar(u8, row.str, '|');
+                var c: usize = 0;
+                while (it.next()) |cell| : (c += 1) if (c < cols.len) {
+                    const t = std.mem.trim(u8, cell, " ");
+                    cols[c] = @max(cols[c], std.unicode.utf8CountCodepoints(t) catch t.len);
+                    ncol = @max(ncol, c + 1);
+                };
+            };
+            for (cols[0..ncol]) |cw| w += (f(cw) * 0.30 + 0.875) * s;
+            h = f(nrow) * s;
+            x0 = at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "block")) {
+            for (fields) |fd| if (std.mem.eql(u8, fd.name, "size")) {
+                w = fd.val.vec[0];
+                h = fd.val.vec[1];
+            };
+            x0 = at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "wave")) {
+            const step = num.get(fields, "step") orelse 0.5;
+            const rh = num.get(fields, "size") orelse 0.45;
+            var steps: usize = 0;
+            var name_len: usize = 0;
+            var nrow: usize = 0;
+            for (fields) |fd| if (std.mem.eql(u8, fd.name, "rows")) for (fd.val.list) |row| {
+                nrow += 1;
+                const head = std.mem.sliceTo(row.str, '|');
+                const colon = std.mem.lastIndexOfScalar(u8, head, ':');
+                const pat = if (colon) |c| head[c + 1 ..] else head;
+                var k: usize = 0;
+                for (pat) |c| if (c != ' ' and c != '\t') {
+                    k += 1;
+                };
+                steps = @max(steps, k);
+                if (colon) |c| name_len = @max(name_len, std.mem.trim(u8, head[0..c], " ").len);
+            };
+            w = f(steps) * step + f(name_len) * @max(0.32, rh * 0.62) * 0.55 + 0.3;
+            h = f(nrow) * rh * 1.9;
+            x0 = at[0] - w / 2;
+        } else return;
+        const tol = 0.05;
+        const x1 = x0 + w;
+        const y0 = at[1] - h / 2;
+        const y1 = at[1] + h / 2;
+        var edges: [4][]const u8 = undefined;
+        var ne: usize = 0;
+        if (x0 < -8 - tol) {
+            edges[ne] = "left";
+            ne += 1;
+        }
+        if (x1 > 8 + tol) {
+            edges[ne] = "right";
+            ne += 1;
+        }
+        if (y1 > 4.5 + tol) {
+            edges[ne] = "top";
+            ne += 1;
+        }
+        if (y0 < -4.5 - tol) {
+            edges[ne] = "bottom";
+            ne += 1;
+        }
+        if (ne == 0) return;
+        const which = try std.mem.join(p.arena, " and ", edges[0..ne]);
+        const fix = if (w > 16 or h > 9) "make it smaller (size=) or split it" else "move it inward, shorten it or reduce size=";
+        try p.warn("{s}: about {d:.1}x{d:.1}, spanning x {d:.1}..{d:.1}, y {d:.1}..{d:.1}: it runs off the {s} of the board (x -8..8, y -4.5..4.5); {s}", .{ op, w, h, x0, x1, y0, y1, which, fix });
+    }
+
     fn lookup(p: *LineParser, name: []const u8) Error!Entity {
         if (p.scene.names.get(name)) |e| return e;
         if (suggest(name, p.scene.names.keys())) |s|
@@ -775,6 +930,28 @@ const LineParser = struct {
         return p.fail("{s}: unknown name '{s}'", .{ p.op.name, name });
     }
 };
+
+/// A wave signal's pin name: drop a trailing bus range ([7:0]), turn every run
+/// of other characters into '_', trim '_' at the ends, and prefix a leading
+/// digit with 's'. Empty means no pin. Mirrors wavePin in viewer/js/panels.js.
+pub fn wavePin(a: Allocator, name: []const u8) Allocator.Error![]const u8 {
+    var n = std.mem.trim(u8, name, " \t");
+    if (n.len > 0 and n[n.len - 1] == ']') if (std.mem.lastIndexOfScalar(u8, n, '[')) |b| {
+        n = std.mem.trimEnd(u8, n[0..b], " \t");
+    };
+    var out: std.ArrayList(u8) = .empty;
+    var gap = false;
+    for (n) |c| {
+        if (std.ascii.isAlphanumeric(c) or c == '_') {
+            if (gap and out.items.len > 0) try out.append(a, '_');
+            gap = false;
+            try out.append(a, c);
+        } else gap = true;
+    }
+    var r = std.mem.trim(u8, out.items, "_");
+    if (r.len > 0 and std.ascii.isDigit(r[0])) r = try std.mem.concat(a, u8, &.{ "s", r });
+    return r;
+}
 
 /// Stands in for a `<<TAG` block among the positional tokens (compared by address).
 const heredoc_marker: []const u8 = "<<heredoc>>";
@@ -849,6 +1026,7 @@ pub const Stream = struct {
     here_head: std.ArrayList(u8) = .empty,
     here_body: std.ArrayList(u8) = .empty,
     here_line: u32 = 0,
+    warned_cmd: bool = false, // mixed mode: told once that a command sat outside a fence
 
     const max_block = 256 * 1024;
 
@@ -920,9 +1098,13 @@ pub const Stream = struct {
             }
             return;
         }
-        if (st.mode == .vcl) return st.vclLine(scene, text, out);
-
         const t = std.mem.trim(u8, text, " \t");
+        if (st.mode == .vcl) {
+            if (!std.mem.startsWith(u8, t, "```")) return st.vclLine(scene, text, out);
+            // A fence in plain VCL: this is mixed text sent in the wrong mode.
+            st.mode = .mixed;
+            try diagLevel(out, "warning", st.line_no, "this is mixed text (prose with ```vcl fences) sent as plain VCL, so the prose above failed as commands; switched to mixed mode from here. Send it with mode=mixed");
+        }
         if (std.mem.startsWith(u8, t, "```")) {
             const lang = std.mem.trim(u8, t[3..], " \t");
             st.fence = switch (st.fence) {
@@ -935,6 +1117,10 @@ pub const Stream = struct {
             .vcl => return st.vclLine(scene, text, out),
             .other => return,
             .none => {},
+        }
+        if (!st.warned_cmd and looksLikeCommand(t)) {
+            st.warned_cmd = true;
+            try diagLevel(out, "warning", st.line_no, "this looks like a VCL command outside a ```vcl fence, so it was spoken, not drawn. Put commands inside ```vcl fences, or send plain VCL without mode=mixed");
         }
         // Prose: strip light markdown, split into sentences.
         var prose = std.mem.trimStart(u8, t, "#>-* \t");
@@ -973,6 +1159,37 @@ pub const Stream = struct {
     }
 };
 
+/// Words that read like a sentence: 4+ plain tokens ending in punctuation,
+/// or a first word with an apostrophe (Let's, It's).
+fn looksLikeProse(toks: []const Token) bool {
+    if (std.mem.indexOfScalar(u8, toks[0].text, '\'') != null or std.mem.indexOf(u8, toks[0].text, "’") != null) return true;
+    if (toks.len < 4) return false;
+    for (toks) |t| if (std.mem.indexOfAny(u8, t.text, "=\"") != null) return false;
+    const last = toks[toks.len - 1].text;
+    return std.mem.indexOfScalar(u8, ".?!:,", last[last.len - 1]) != null;
+}
+
+/// A prose line that is really a command: `[&] [name:] op …` with a known op and
+/// command-like arguments (key=value, a quoted string, x,y numbers, or nothing),
+/// not ending like a sentence.
+fn looksLikeCommand(t: []const u8) bool {
+    if (t.len == 0 or std.mem.endsWith(u8, t, ".") or std.mem.endsWith(u8, t, "?") or std.mem.endsWith(u8, t, "!")) return false;
+    var it = std.mem.tokenizeAny(u8, std.mem.trimStart(u8, t, "& "), " \t");
+    var first = it.next() orelse return false;
+    if (std.mem.indexOfScalar(u8, first, ':')) |c| {
+        if (!isIdent(first[0..c])) return false;
+        first = if (c + 1 < first.len) first[c + 1 ..] else it.next() orelse return false;
+    }
+    if (findOp(first) == null) return false;
+    const rest = it.rest();
+    if (rest.len == 0) return true; // `clear`, `point`
+    if (std.mem.indexOfScalar(u8, rest, '=') != null or std.mem.indexOfScalar(u8, rest, '"') != null) return true;
+    for (rest, 0..) |c, i| if (c == ',' and i > 0 and i + 1 < rest.len and
+        (std.ascii.isDigit(rest[i - 1]) or rest[i - 1] == '.') and
+        (std.ascii.isDigit(rest[i + 1]) or rest[i + 1] == '-' or rest[i + 1] == '.')) return true;
+    return false;
+}
+
 /// `cmd args… <<TAG` (outside any string) opens a block that ends at a line `TAG`.
 pub fn blockStart(text: []const u8) ?struct { head: []const u8, tag: []const u8 } {
     const t = std.mem.trimEnd(u8, text, " \t");
@@ -993,7 +1210,11 @@ pub fn blockStart(text: []const u8) ?struct { head: []const u8, tag: []const u8 
 }
 
 fn diag(out: *Writer, line_no: u32, msg: []const u8) Writer.Error!void {
-    try out.print("{{\"op\":\"diag\",\"level\":\"error\",\"line\":{d},\"msg\":", .{line_no});
+    return diagLevel(out, "error", line_no, msg);
+}
+
+fn diagLevel(out: *Writer, level: []const u8, line_no: u32, msg: []const u8) Writer.Error!void {
+    try out.print("{{\"op\":\"diag\",\"level\":\"{s}\",\"line\":{d},\"msg\":", .{ level, line_no });
     try writeJsonString(out, msg);
     try out.writeAll("}\n");
 }
@@ -1305,6 +1526,37 @@ test "mixed mode: prose becomes say, vcl fences run, other fences skipped" {
     , got);
 }
 
+test "wrong mode: fences in plain VCL switch to mixed; commands in prose are flagged once" {
+    const plain = try runLines(
+        \\Let's draw a line, shall we?
+        \\```vcl
+        \\l: line 0,0 1,1
+        \\```
+        \\Done.
+    , .vcl);
+    defer testing.allocator.free(plain);
+    try testing.expectEqualStrings(
+        \\{"op":"diag","level":"error","line":1,"msg":"unknown command 'Let's': this line looks like prose; text that mixes prose and ```vcl fences must be sent with mode=mixed"}
+        \\{"op":"diag","level":"warning","line":2,"msg":"this is mixed text (prose with ```vcl fences) sent as plain VCL, so the prose above failed as commands; switched to mixed mode from here. Send it with mode=mixed"}
+        \\{"op":"line","id":"l","line":3,"par":false,"dur":0.6,"from":[0,0,0],"to":[1,1,0]}
+        \\{"op":"say","line":5,"par":false,"dur":1.2,"text":"Done."}
+        \\
+    , plain);
+    const mixed = try runLines(
+        \\title "Ohm's law"
+        \\l: line 0,0 1,1
+        \\Point at the line, then clear the board.
+    , .mixed);
+    defer testing.allocator.free(mixed);
+    try testing.expectEqualStrings(
+        \\{"op":"diag","level":"warning","line":1,"msg":"this looks like a VCL command outside a ```vcl fence, so it was spoken, not drawn. Put commands inside ```vcl fences, or send plain VCL without mode=mixed"}
+        \\{"op":"say","line":1,"par":false,"dur":1.54,"text":"title \"Ohm's law\""}
+        \\{"op":"say","line":2,"par":false,"dur":1.92,"text":"l: line 0,0 1,1"}
+        \\{"op":"say","line":3,"par":false,"dur":3.44,"text":"Point at the line, then clear the board."}
+        \\
+    , mixed);
+}
+
 test "group needs name and reparents" {
     try expectOut(
         \\a: pt 0,0
@@ -1427,6 +1679,49 @@ test "row pins: code lines, table rows, wave signals" {
         \\{"op":"point","line":5,"par":false,"dur":0.4,"at":{"ref":"t","anchor":"R1","off":[0,0,0]}}
         \\{"op":"wave","id":"w","line":6,"par":false,"dur":1,"at":[0,0,0],"rows":["clk: p.p.","data[7:0]: =.= | A B"]}
         \\{"op":"point","line":7,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"clk","off":[0,0,0]}}
+        \\
+    );
+}
+
+test "a string glued to the next character is an error, not a silent typo" {
+    try expectOut(
+        \\w: wave 0,0 "clk: p...": "en: 01" step=1
+        \\text 0,0 "a"b"
+    ,
+        \\{"op":"diag","level":"error","line":1,"msg":"unexpected ':' right after the closing quote at column 23 (a quoted string must be followed by a space)"}
+        \\{"op":"diag","level":"error","line":2,"msg":"unexpected 'b' right after the closing quote at column 12 (a quoted string must be followed by a space)"}
+        \\
+    );
+}
+
+test "wave: any signal name becomes a pin; bad symbols are caught" {
+    try expectOut(
+        \\w: wave 0,0 "FIFO write: 0.1" "d[7:0]: =.= | A B" "top: 1.."
+        \\point w.FIFO_write
+        \\point w.d
+        \\wave 0,0 "a: 01q"
+    ,
+        \\{"op":"diag","level":"warning","line":1,"msg":"wave: signal 'top' gets no pin (point at it with an offset from the wave instead, or rename it)"}
+        \\{"op":"wave","id":"w","line":1,"par":false,"dur":1,"at":[0,0,0],"rows":["FIFO write: 0.1","d[7:0]: =.= | A B","top: 1.."]}
+        \\{"op":"point","line":2,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"FIFO_write","off":[0,0,0]}}
+        \\{"op":"point","line":3,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"d","off":[0,0,0]}}
+        \\{"op":"diag","level":"error","line":4,"msg":"wave: unknown symbol 'q' in \"a: 01q\" (use 0 1 z x . = p n, after 'name:')"}
+        \\
+    );
+}
+
+test "bounds lint: text and panels that run off the board" {
+    try expectOut(
+        \\text 7,0 "far too long for this spot"
+        \\text -7.9,0 "ok" align=left
+        \\a: axes 0,0 x=0..10 y=0..1
+        \\text 9,0 "data coordinates are not checked" on=a
+    ,
+        \\{"op":"diag","level":"warning","line":1,"msg":"text: about 5.4x0.7, spanning x 4.3..9.7, y -0.4..0.4: it runs off the right of the board (x -8..8, y -4.5..4.5); move it inward, shorten it or reduce size="}
+        \\{"op":"text","id":"_1","line":1,"par":false,"dur":0.5,"at":[7,0,0],"text":"far too long for this spot"}
+        \\{"op":"text","id":"_2","line":2,"par":false,"dur":0.5,"at":[-7.9,0,0],"text":"ok","align":"left"}
+        \\{"op":"axes","id":"a","line":3,"par":false,"dur":1,"at":[0,0,0],"x":[0,10],"y":[0,1]}
+        \\{"op":"text","id":"_3","line":4,"par":false,"dur":0.5,"at":[9,0,0],"text":"data coordinates are not checked","on":"a"}
         \\
     );
 }

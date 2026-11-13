@@ -1,7 +1,7 @@
 //! vcl — command-line tool and live stream server.
 //!
-//!   vcl check FILE...            report diagnostics (exit 1 on errors)
-//!   vcl compile [--mixed] FILE   print the JSON IR, one command per line
+//!   vcl check [--mixed] FILE...  report diagnostics (exit 1 on errors); .md is mixed; - is stdin
+//!   vcl compile [--mixed] FILE   print the JSON IR, one command per line (- is stdin)
 //!   vcl serve [--port N] [--host H] [--root DIR] [--assets DIR]
 //!
 //! The server:
@@ -25,8 +25,8 @@ const WebSocket = std.http.Server.WebSocket;
 
 const usage =
     \\usage:
-    \\  vcl check FILE...              report diagnostics
-    \\  vcl compile [--mixed] FILE     print JSON IR (one command per line)
+    \\  vcl check [--mixed] FILE...    report diagnostics (.md files are mixed; - reads stdin)
+    \\  vcl compile [--mixed] FILE     print JSON IR (one command per line; - reads stdin)
     \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer] [--assets DIR]
     \\
 ;
@@ -82,11 +82,25 @@ fn isDiag(line: []const u8) bool {
     return std.mem.startsWith(u8, line, "{\"op\":\"diag\"");
 }
 
-fn check(io: Io, gpa: Allocator, files: []const [:0]const u8, out: *Io.Writer) !usize {
+/// A file's contents, or standard input for "-".
+fn readSource(io: Io, gpa: Allocator, path: []const u8) ![]u8 {
+    const limit: Io.Limit = .limited(16 << 20);
+    if (!std.mem.eql(u8, path, "-")) return Io.Dir.cwd().readFileAlloc(io, path, gpa, limit);
+    var buf: [4096]u8 = undefined;
+    var r = Io.File.stdin().reader(io, &buf);
+    return r.interface.allocRemaining(gpa, limit);
+}
+
+fn check(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) !usize {
     var errors: usize = 0;
-    for (files) |path| {
-        const mode: vcl.Mode = if (std.mem.endsWith(u8, path, ".md")) .mixed else .vcl;
-        const src = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(16 << 20)) catch |err| {
+    var force_mixed = false;
+    for (args) |a| if (std.mem.eql(u8, a, "--mixed")) {
+        force_mixed = true;
+    };
+    for (args) |path| {
+        if (std.mem.eql(u8, path, "--mixed")) continue;
+        const mode: vcl.Mode = if (force_mixed or std.mem.endsWith(u8, path, ".md")) .mixed else .vcl;
+        const src = readSource(io, gpa, path) catch |err| {
             try out.print("{s}: cannot read: {s}\n", .{ path, @errorName(err) });
             errors += 1;
             continue;
@@ -118,7 +132,7 @@ fn compile(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) 
     for (args) |a| {
         if (std.mem.eql(u8, a, "--mixed")) mode = .mixed else path = a;
     }
-    const src = try Io.Dir.cwd().readFileAlloc(io, path orelse return error.MissingFile, gpa, .limited(16 << 20));
+    const src = try readSource(io, gpa, path orelse return error.MissingFile);
     defer gpa.free(src);
     const ir = try runSource(gpa, src, mode);
     defer gpa.free(ir);

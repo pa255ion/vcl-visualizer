@@ -234,6 +234,16 @@ function roundRect(g, x, y, w, h, r) {
  * = or 2–9 (a bus value, named by the next label), p/n (one clock period
  * starting rising/falling). Returns [{name, steps:[{v, label?}]}].
  */
+/** A wave signal's pin name (mirrors wavePin in core/src/vcl.zig):
+ *  "FIFO write" → FIFO_write, "d[7:0]" → d, "3v3" → s3v3, "" → null. */
+export function wavePin(name) {
+  let n = String(name).trim();
+  if (n.endsWith(']') && n.lastIndexOf('[') >= 0) n = n.slice(0, n.lastIndexOf('[')).trim();
+  let r = n.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  if (/^[0-9]/.test(r)) r = 's' + r;
+  return r || null;
+}
+
 export function parseWave(rows) {
   return rows.map((row) => {
     const [head, labelPart] = String(row).split('|');

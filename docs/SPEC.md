@@ -51,7 +51,7 @@ END
 | number | `2`  `-0.5`  `1e-3` | |
 | vector | `1,2`  `1,2,3` | no spaces; a missing z is 0 |
 | point | `1,2` or `a` or `a.top` or `a.top+0,0.4` | a vector, or a reference to an entity, optionally an anchor and a `+offset` |
-| string | `"Hello \"world\""` | escapes: `\"` `\\` `\n` |
+| string | `"Hello \"world\""` | escapes: `\"` `\\` `\n`; a closing quote must be followed by a space or the end of the line (`"a": "b"` is an error). UTF-8 is fine on the board (`"τ ≈ 4.7 µs"`); in speech (`say`, prose) write symbols as words, because the robot voice skips them |
 | colour | `#f80`  `#ff8800`  `blue` | named: `red orange yellow green teal cyan blue purple pink white gray black brown` |
 | range | `-3..3` | |
 | bool | `true false on off yes no 1 0` | |
@@ -61,6 +61,18 @@ named connection points of parts (`R1.a`, `U1.y`), block ports (`cpu.clk`),
 code lines (`c.L3`), table rows (`t.R2`) and timing-diagram signals (`w.clk`).
 The parser knows every entity's pins and rejects unknown ones with a list of
 the valid names.
+
+| Pin | Where it is | Faces |
+|---|---|---|
+| part pin | the end of the pin's lead | outward along the lead |
+| block port | on the box edge, at the port's tick | out of that side |
+| code line `L3`, table row `R2` | right edge of the panel, level with the line/row | right |
+| wave signal | right end of the signal's trace | right |
+
+So `arrow note.left c.L3` points at line 3 from the right. A wave signal's pin
+is its name with a trailing bus range dropped and other non-identifier
+characters turned into `_`: `"clk"` → `w.clk`, `"d[7:0]"` → `w.d`,
+`"FIFO write"` → `w.FIFO_write`, `"3v3"` → `w.s3v3`.
 `start`/`end` are the endpoints of lines, arrows and paths (for anything else
 they mean `left`/`right`). Anchors are resolved by the renderer at the moment
 the command runs, so they follow entities that have moved.
@@ -138,7 +150,7 @@ Every drawing op accepts: `color=C` `opacity=N` `fx=draw|fade|grow|pop|none`
 | Op | Arguments | Keys |
 |---|---|---|
 | `axes` | `P` | centre; `x=R` `y=R` `z=R` (z makes them 3D) `size=V` (extent in board units) `grid=bool` `ticks=bool` `xlabel=S` `ylabel=S` `zlabel=S` |
-| `plot` | `ID S [S [S]]` | on axes ID: one string `y=f(x)`; two strings `x(t), y(t)`; three strings `x(t), y(t), z(t)`. `x=R` or `t=R` domain; `width=N` |
+| `plot` | `ID S [S [S]]` | on axes ID: one string `y=f(x)`; two strings `x(t), y(t)`; three strings `x(t), y(t), z(t)`. `x=R` or `t=R` domain; `width=N` `dash=bool` (e.g. a fit or estimate next to data) |
 | `surf` | `ID S` | surface `z=f(x,y)` on 3D axes; `x=R` `y=R` `res=N` `fill=C` `wire=bool` |
 
 Expressions use `x y t`, `+ - * / ^`, implicit multiplication (`2x`, `3(x+1)`),
@@ -162,7 +174,7 @@ log log2 floor ceil round min max pow sign mod`.
 |---|---|---|
 | `part` | `P KIND` | `rot=N` (degrees, counter-clockwise) `flip=bool` `value=S` `size=N`. Kinds and pins: `resistor capacitor inductor vsource isource battery switch` (a, b) · `diode led` (a, k) · `ground vdd` (a) · `npn pnp` (b, c, e) · `nmos pmos` (g, d, s) · `opamp` (inp, inn, out) · `and or nand nor xor xnor` (a, b, y) · `not buf` (a, y) · `dff` (d, clk, q, qn) · `mux2` (a, b, s, y). Two-pin parts lie along x with `a` on the left. |
 | `wire` | `P P…` | right-angle route through the points; pins are left along their direction. `route=auto\|hv\|vh\|direct` `dot=none\|start\|end\|both` (junction dots) `arrow=bool` `bus=N` (slash + width) `width` `dash` |
-| `block` | `P V [S]` | box of size `w,h` with a title; `in=` `out=` `top=` `bottom=` comma-separated port names become pins on that side. Warns when too small for its title and ports. |
+| `block` | `P V [S]` | box of size `w,h` with a title; `in=` `out=` `top=` `bottom=` comma-separated port names become pins on that side. `flip=true` puts inputs on the right and outputs on the left, for rows that flow right to left (the return path of a U-shaped pipeline). Warns when too small for its title and ports. |
 | `frame` | `ID…` | dashed, titled boundary around entities that follows them; `title=S` `pad=N` `fill=C`. Frames can contain frames. |
 
 ### 4.7 Panels
@@ -171,7 +183,7 @@ log log2 floor ceil round min max pow sign mod`.
 |---|---|---|
 | `code` | `P S` | syntax-highlighted source (`<<END` block); `lang=` (c cpp zig rust python js ts java go verilog vhdl asm sh…) `title=S` `lines=bool` `focus=R` (highlight lines, dim the rest; `set c focus=` moves it) `size=N` (line height). Pins `L1…` |
 | `table` | `P S…` | one string per row, cells split by `\|`; `header=bool` (default true) `focus=R` (data rows) `size=N`. Pins `R1…` |
-| `wave` | `P S…` | timing diagram, one row per signal: `"name: pattern [\| labels]"` with `0 1` levels, `z` high-Z, `x` unknown, `.` repeat, `=` (or `2`–`9`) a bus value named by the next label, `p`/`n` one clock period. `step=N` `size=N`. Pins: signal names. |
+| `wave` | `P S…` | timing diagram, one row per signal: `"name: pattern [\| labels]"` with `0 1` levels, `z` high-Z, `x` unknown, `.` repeat, `=` (or `2`–`9`) a bus value named by the next label, `p`/`n` one clock period. `step=N` `size=N`. Pins: signal names (see §1). |
 | `svg` | `P S` | URL or inline markup (`<<END`), rasterized sharply; `size=N` (width) |
 
 `model` loads glTF/GLB, STL (CAD, Z-up) and OBJ by file extension, scaled to
@@ -206,7 +218,17 @@ plot ax "0.5x + 1" color=blue
 The slope is how much y changes per step in x.
 ````
 
-Text outside ```` ```vcl ```` fences becomes `say` commands, one per line.
+Text outside ```` ```vcl ```` fences becomes `say` commands, one per
+sentence (a line is split after `.` `?` `!` followed by a space); light
+markdown (`*` `_` `` ` `` and leading `#` `>` `-`) is stripped. Fences in
+other languages are skipped.
+
+Sending in the wrong mode is caught: a ```` ``` ```` line in plain VCL switches
+that stream to mixed mode with a warning (prose lines before it fail with a
+hint to use `mode=mixed`), and in mixed mode the first prose line that looks
+like a VCL command gets a warning that it was spoken rather than drawn. The
+viewer's Editor and `tools/stream.mjs` choose mixed mode by themselves when the
+text contains a ```` ```vcl ```` line.
 
 ## 6. Errors
 
@@ -217,6 +239,13 @@ line 7: arrow: expected point for 'to', got "a.topp" (unknown anchor 'topp')
 line 9: del: unknown name 'circel'
 line 4: warning: rect: unknown key 'colour' (did you mean 'color'?)
 ```
+
+Warnings are also given for layout the parser can predict: a `block` too
+small for its title and ports, and `text`, `code`, `table`, `block` or `wave`
+placed at board coordinates that would run off the board (sizes are estimated
+from character counts, so treat a near miss as a hint). Anything with `on=` is
+in data coordinates and not checked; overlaps between entities are not
+detected.
 
 Diagnostics go back to whoever sent the text, so an LLM harness can return
 them to the model as tool output.

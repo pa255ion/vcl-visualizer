@@ -9,7 +9,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { symbol, route } from './parts.js';
-import { drawCode, drawTable, parseWave } from './panels.js';
+import { drawCode, drawTable, parseWave, wavePin } from './panels.js';
 import { Timeline } from './timeline.js';
 import { compile } from './expr.js';
 import { TextPlane } from './text.js';
@@ -943,7 +943,7 @@ BUILD.plot = function (e, c) {
   brk();
   if (!polys.length) throw new Error('nothing to draw in this range');
   strokeEntity(e, () => ({ polys, ends: [polys[0][0], polys.at(-1).at(-1)], label: polys.at(-1).at(-1), fixedOrigin: true }),
-    { width: c.width ?? 0.06, color });
+    { width: c.width ?? 0.06, color, dash: c.dash });
   if (c.label !== undefined) { e.addLabel(c.label, new THREE.Vector3(), 'left'); e.label.mesh.position.copy(e.ends[1]).add(new THREE.Vector3(0.2, 0.2, 0)); }
 };
 
@@ -1134,8 +1134,11 @@ BUILD.block = function (e, c) {
   });
   const V3 = (x, y) => new THREE.Vector3(x, y, 0);
   const sideY = (i, n) => sideTop - ((i + 1) * (sideTop + h / 2)) / (n + 1);
-  side(portList(c.in), (i, n) => { const y = sideY(i, n); return { at: V3(-w / 2, y), dir: V3(-1, 0), text: V3(-w / 2 + 0.12, y), align: 'left' }; });
-  side(portList(c.out), (i, n) => { const y = sideY(i, n); return { at: V3(w / 2, y), dir: V3(1, 0), text: V3(w / 2 - 0.12, y), align: 'right' }; });
+  // flip=true mirrors the sides: inputs on the right, outputs on the left (right-to-left flow).
+  const L = (i, n) => { const y = sideY(i, n); return { at: V3(-w / 2, y), dir: V3(-1, 0), text: V3(-w / 2 + 0.12, y), align: 'left' }; };
+  const R = (i, n) => { const y = sideY(i, n); return { at: V3(w / 2, y), dir: V3(1, 0), text: V3(w / 2 - 0.12, y), align: 'right' }; };
+  side(portList(c.in), c.flip ? R : L);
+  side(portList(c.out), c.flip ? L : R);
   side(portList(c.top), (i, n) => { const x = -w / 2 + ((i + 1) * w) / (n + 1); return { at: V3(x, h / 2), dir: V3(0, 1), text: V3(x, h / 2 - 0.22), align: 'center' }; });
   side(portList(c.bottom), (i, n) => { const x = -w / 2 + ((i + 1) * w) / (n + 1); return { at: V3(x, -h / 2), dir: V3(0, -1), text: V3(x, -h / 2 + 0.22), align: 'center' }; });
   if (c.label !== undefined) e.addLabel(c.label, V3(0, h / 2 + 0.3));
@@ -1231,7 +1234,8 @@ BUILD.wave = function (e, c) {
     const ym = yTop - ri * rowH - rowH / 2, hi = ym + h / 2, lo = ym - h / 2;
     const lvl = (v) => (v === '1' ? hi : v === '0' ? lo : ym);
     texts.push({ text: row.name, pos: new THREE.Vector3(x0 - 0.25, ym, 0), align: 'right', size: Math.max(0.32, h * 0.62) });
-    if (/^[A-Za-z_]\w*$/.test(row.name)) e.pins[row.name] = { at: new THREE.Vector3(x0 + row.steps.length * step, ym, 0), dir: new THREE.Vector3(1, 0, 0) };
+    const pin = wavePin(row.name);
+    if (pin && !(pin in e.pins)) e.pins[pin] = { at: new THREE.Vector3(x0 + row.steps.length * step, ym, 0), dir: new THREE.Vector3(1, 0, 0) };
     let pen = null;
     const end = () => { if (pen && pen.length > 1) polys.push(pen); pen = null; };
     for (let j = 0; j < row.steps.length; j++) {

@@ -2,9 +2,13 @@
 // highlighting, timing-diagram parsing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { symbol, route, PART_KINDS } from '../js/parts.js';
-import { highlight, parseWave, cells } from '../js/panels.js';
+import { highlight, parseWave, cells, wavePin } from '../js/panels.js';
+
+const vclBin = fileURLToPath(new URL('../../zig-out/bin/vcl', import.meta.url));
 
 test('parts.js pins match the parser (core/src/vcl.zig part_pins)', () => {
   const zig = readFileSync(new URL('../../core/src/vcl.zig', import.meta.url), 'utf8');
@@ -65,4 +69,16 @@ test('parseWave: levels, repeats, bus values with labels, clocks', () => {
   assert.deepEqual(bus.steps.filter((s) => s.label !== undefined).map((s) => s.label), ['A5', '3C']);
   assert.throws(() => parseWave(['q: 01q']), /unknown symbol 'q'/);
   assert.deepEqual(cells(['A | B', 'x|y']), [['A', 'B'], ['x', 'y']]);
+});
+
+test('wavePin: signal names become the same pins as in the parser', { skip: !existsSync(vclBin) && 'run `zig build` first' }, () => {
+  const names = ['clk', 'FIFO write', 'd[7:0]', 'data_in [31:0]', '3v3', 'a-b.c', 'TVALID'];
+  assert.deepEqual(names.map(wavePin), ['clk', 'FIFO_write', 'd', 'data_in', 's3v3', 'a_b_c', 'TVALID']);
+  assert.equal(wavePin('[7:0]'), null);
+  // The parser lists a wave's pins when a point names one it doesn't have.
+  const src = `w: wave 0,0 ${names.map((n) => `"${n}: 01"`).join(' ')}\npoint w.nope\n`;
+  let out; // exits 1 because of the deliberate error; the diagnostics are on stdout
+  try { out = execFileSync(vclBin, ['compile', '-'], { input: src, encoding: 'utf8' }); } catch (e) { out = e.stdout; }
+  const msg = out.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((m) => m.op === 'diag').msg;
+  assert.deepEqual(msg.split('its pins are ')[1].split(', '), names.map(wavePin));
 });
