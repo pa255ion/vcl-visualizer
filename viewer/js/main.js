@@ -202,6 +202,13 @@ editor.addEventListener('keydown', (e) => {
 $('#toggle-editor').onclick = () => document.body.classList.toggle('editing');
 $('#voice').value = voice.mode;
 $('#voice').onchange = (e) => voice.setMode(e.target.value);
+const browserOption = $('#voice option[value="browser"]');
+voice.onVoices = (n) => {
+  browserOption.textContent = n ? 'browser voice' : 'browser voice (none available)';
+  browserOption.title = voice.browserProblem() ?? '';
+};
+voice.onVoices(voice.browserVoices.length);
+voice.loading?.then(() => { $('#voice').value = voice.mode; }); // robot may fall back to browser
 
 async function loadLesson(name) {
   const res = await fetch(`lessons/${name}${VQ}`);

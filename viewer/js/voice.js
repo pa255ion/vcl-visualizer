@@ -3,7 +3,10 @@
 //   robot    tts-lab (viewer/tts.wasm, formant synthesis) played from the
 //            avatar's head as positional audio; `say` lasts exactly as long
 //            as the audio, so speech and visuals stay in step
-//   browser  the browser's speechSynthesis (timing stays an estimate)
+//   browser  the browser's speechSynthesis (timing stays an estimate). It only
+//            has the voices the OS provides: on Linux, Chromium-based browsers
+//            (Brave, Chrome) have none unless started with
+//            --enable-speech-dispatcher.
 //   off      subtitles only
 //
 // Speech is synthesized when a `say` arrives (a few ms per sentence) and
@@ -41,7 +44,40 @@ export class Voice {
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, unlock, { passive: true });
     this.unlock = unlock;
 
+    // Browser speech voices arrive asynchronously (and may never arrive).
+    this.browserVoices = [];
+    if ('speechSynthesis' in window) {
+      const update = () => {
+        this.browserVoices = speechSynthesis.getVoices();
+        this.onVoices?.(this.browserVoices.length);
+      };
+      update();
+      speechSynthesis.addEventListener?.('voiceschanged', update);
+    }
+
     if (this.mode === 'robot') this.load();
+  }
+
+  /** Why browser speech can't work here, or null if it can. */
+  browserProblem() {
+    if (!('speechSynthesis' in window)) return "this browser has no speech synthesis";
+    if (!this.browserVoices.length) {
+      return /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)
+        ? 'this browser has no voices; on Linux, start Chromium-based browsers (Brave, Chrome) with --enable-speech-dispatcher'
+        : 'this browser has no speech voices installed';
+    }
+    return null;
+  }
+
+  /** Best voice for the page language: exact locale, then language, preferring the default. */
+  browserVoice() {
+    const want = (navigator.language || 'en-US').toLowerCase();
+    const base = want.split('-')[0];
+    const score = (v) => {
+      const l = v.lang.toLowerCase().replace('_', '-');
+      return (l === want ? 4 : l.split('-')[0] === base ? 2 : 0) + (v.default ? 1 : 0) + (v.localService ? 0.5 : 0);
+    };
+    return [...this.browserVoices].sort((a, b) => score(b) - score(a))[0] ?? null;
   }
 
   setMode(m) {
@@ -49,6 +85,10 @@ export class Voice {
     try { localStorage.setItem('vcl.voice', m); } catch {}
     if (m === 'robot') this.load();
     if (m !== 'browser' && 'speechSynthesis' in window) speechSynthesis.cancel();
+    if (m === 'browser') {
+      const why = this.browserProblem();
+      if (why) this.log('warning', `browser voice: ${why}`);
+    }
   }
 
   load() {
@@ -89,10 +129,15 @@ export class Voice {
       if (this.audio.isPlaying) this.audio.stop();
       this.audio.setBuffer(buf);
       this.audio.play();
-    } else if (this.mode === 'browser' && 'speechSynthesis' in window) {
-      speechSynthesis.cancel();
+    } else if (this.mode === 'browser') {
+      if (this.browserProblem()) return;
+      // Queue rather than cancel: browser timing is estimated, so a sentence
+      // may still be playing when the next one starts.
       const u = new SpeechSynthesisUtterance(cmd.text);
+      const v = this.browserVoice();
+      if (v) { u.voice = v; u.lang = v.lang; }
       u.rate = 1.05;
+      u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled') this.log('warning', `browser voice: ${e.error}`); };
       speechSynthesis.speak(u);
     }
   }
