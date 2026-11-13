@@ -33,6 +33,7 @@ How to teach here:
 - This is a conversation, not a lecture: cover one idea per reply, keep it brief, and when it helps, end by checking understanding or offering where to go next.
 - Build on what is already on the board. \`clear\` when you change topic.
 - A user message may begin with a [board] line listing the names currently on the board. Only those exist.
+- An [assets] line lists files you can show with \`svg\` or \`model\` (use the paths as given).
 - A [viewer] message lists VCL lines that failed. Reply with only a \`\`\`vcl fence that redoes them correctly, with no prose.`;
 
 const PRIMER = readFileSync(path.join(here, '../../docs/PRIMER.md'), 'utf8');
@@ -67,6 +68,11 @@ async function post(route, body) {
   try { await fetch(SERVER + route, { method: 'POST', body }); } catch (e) { log(`POST ${route} failed: ${e.message}`); }
 }
 
+/** Files the teacher can show (the server's assets directory). */
+async function assetFiles() {
+  try { return (await (await fetch(SERVER + '/assets/index.json')).json()).files ?? []; } catch { return []; }
+}
+
 /** Names that exist on the board now (from the server's replay log). */
 async function boardNames() {
   try {
@@ -82,11 +88,11 @@ async function boardNames() {
 
 // Producer link: our text goes in here (mixed mode); diagnostics for our lines come back.
 // The server numbers lines per connection, so we keep our own copy to quote them.
-let lineNo = 0, partial = '', inFence = false;
+let lineNo = 0, partial = '', inFence = false, blockTag = null;
 const sentLines = new Map();
 let turnErrors = [];
 const producer = link(`${WS}?listen=0&mode=mixed`, {
-  onOpen: () => { lineNo = 0; partial = ''; inFence = false; sentLines.clear(); },
+  onOpen: () => { lineNo = 0; partial = ''; inFence = false; blockTag = null; sentLines.clear(); },
   onMessage: (m) => {
     if (m.op !== 'diag') return;
     const text = sentLines.get(m.line) ?? '';
@@ -104,13 +110,18 @@ function emit(chunk) {
     partial = partial.slice(nl + 1);
     sentLines.set(++lineNo, line);
     if (sentLines.size > 2000) sentLines.delete(lineNo - 2000);
-    if (line.trim().startsWith('```')) inFence = !inFence;
+    // Mirror the server's parser: inside a <<TAG block nothing is a fence.
+    if (blockTag) { if (line.trim() === blockTag) blockTag = null; continue; }
+    const open = inFence && /\s<<([A-Za-z_]\w*)\s*$/.exec(line);
+    if (open) blockTag = open[1];
+    else if (line.trim().startsWith('```')) inFence = !inFence;
   }
 }
 
-/** Finish the turn's text cleanly: flush the last line, close a dangling fence. */
+/** Finish the turn's text cleanly: flush the last line, close a dangling block and fence. */
 function endText() {
   if (partial) emit('\n');
+  if (blockTag) emit(`${blockTag}\n`);
   if (inFence) emit('```\n');
 }
 
@@ -133,6 +144,8 @@ async function pump() {
     const names = await boardNames();
     const content = [];
     if (names) content.push({ type: 'text', text: `[board] ${names.length ? names.join(', ') : '(empty)'}` });
+    const files = await assetFiles();
+    if (files.length) content.push({ type: 'text', text: `[assets] ${files.map((f) => `assets/${f}`).join(', ')}` });
     content.push({ type: 'text', text: q });
     const errors = await turn(content);
     if (errors.length) {

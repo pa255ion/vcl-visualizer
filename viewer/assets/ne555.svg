@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160">
+  <rect x="30" y="0" width="16" height="24" fill="#b0b8c4"/><rect x="30" y="136" width="16" height="24" fill="#b0b8c4"/><rect x="70" y="0" width="16" height="24" fill="#b0b8c4"/><rect x="70" y="136" width="16" height="24" fill="#b0b8c4"/><rect x="110" y="0" width="16" height="24" fill="#b0b8c4"/><rect x="110" y="136" width="16" height="24" fill="#b0b8c4"/><rect x="150" y="0" width="16" height="24" fill="#b0b8c4"/><rect x="150" y="136" width="16" height="24" fill="#b0b8c4"/>
+  <rect x="10" y="22" width="180" height="116" rx="6" fill="#1f2328" stroke="#59636e" stroke-width="2"/>
+  <circle cx="30" cy="118" r="7" fill="#2d333b"/>
+  <path d="M10 66 a14 14 0 0 1 0 28" fill="#2d333b"/>
+  <text x="100" y="86" font-family="monospace" font-size="22" fill="#e6edf3" text-anchor="middle">NE555</text>
+</svg>

@@ -52,7 +52,9 @@ test('ask → streamed lesson → failed line repaired', { skip: !existsSync(vcl
 
   const api = await mockApi([
     'A right triangle has one square corner.\n```vcl\nA: pt 0,0\nB: pt 3,0\nlien A B\n```\nSee the corner?\n',
-    '```vcl\nab: line A B\n```\n',
+    // The repair reply is cut off inside a <<END block (as if it hit max_tokens):
+    // the tutor must close the block and the fence so the scene still gets it.
+    '```vcl\nab: line A B\nk: code 3,0 lang=c <<END\nint x = 1;\n',
   ]);
   t.after(() => api.server.close());
 
@@ -84,7 +86,10 @@ test('ask → streamed lesson → failed line repaired', { skip: !existsSync(vcl
   assert.deepEqual(first.body.cache_control, { type: 'ephemeral' });
   assert.equal(first.body.output_config.effort, 'medium');
   assert.match(first.body.system, /VCL primer/);
-  assert.deepEqual(first.body.messages[0].content.map((b) => b.text), ['[board] (empty)', 'What is a right triangle?']);
+  const intro = first.body.messages[0].content.map((b) => b.text);
+  assert.equal(intro[0], '[board] (empty)');
+  assert.match(intro[1], /^\[assets\] .*assets\/ne555\.svg/);
+  assert.equal(intro.at(-1), 'What is a right triangle?');
 
   // Second request: append-only history, then the repair note quoting the bad line.
   assert.equal(second.body.messages.length, 3);
@@ -101,5 +106,6 @@ test('ask → streamed lesson → failed line repaired', { skip: !existsSync(vcl
   assert.ok(seen.some((m) => m.op === 'say' && m.text === 'A right triangle has one square corner.'));
   assert.ok(ops.includes('pt') && ops.includes('line'));
   assert.ok(await until(() => seen.some((m) => m.op === 'status' && m.text === 'idle')));
-  assert.deepEqual((await names()).filter((n) => !n.startsWith('_')), ['A', 'B', 'ab']);
+  assert.ok(await until(async () => (await names()).includes('k')), 'unclosed block was closed by the tutor');
+  assert.deepEqual((await names()).filter((n) => !n.startsWith('_')), ['A', 'B', 'ab', 'k']);
 });

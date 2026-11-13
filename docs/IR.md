@@ -46,7 +46,7 @@ All other fields are the op's arguments, named as in the spec tables
 |---|---|
 | number | number |
 | vector / point literal | `[x, y, z]` (always 3) |
-| point reference | `{"ref":"A","anchor":"top","off":[0,0.3,0]}` |
+| point reference | `{"ref":"A","anchor":"top","off":[0,0.3,0]}`; `anchor` is a standard anchor or a pin name (`"b"`, `"clk"`, `"L3"`) |
 | colour | `"#rrggbb"` |
 | range | `[lo, hi]` |
 | bool | `true` / `false` |
@@ -87,6 +87,14 @@ A renderer that synthesizes speech may replace a `say`'s `dur` with the audio's
 length **when the command arrives**, before scheduling it.
 Resolve point references **when the command starts**, not when it arrives.
 `viewer/js/timeline.js` is the reference implementation (about 80 lines).
+
+## Pins
+
+Parts, blocks, code, tables and timing diagrams expose named pins. The parser
+has already checked that a referenced pin exists; the renderer must provide
+its position (and, for wires, its outward direction). Part pin positions are
+defined in `viewer/js/parts.js`, whose names must match `part_pins` in
+`core/src/vcl.zig` (a test checks this).
 
 ## Coordinates
 

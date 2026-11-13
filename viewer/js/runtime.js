@@ -6,6 +6,10 @@
 // {ref, anchor, off} resolved against live entities when the command runs.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { symbol, route } from './parts.js';
+import { drawCode, drawTable, parseWave } from './panels.js';
 import { Timeline } from './timeline.js';
 import { compile } from './expr.js';
 import { TextPlane } from './text.js';
@@ -14,10 +18,12 @@ import * as D from './draw.js';
 export const FG = '#e8edf3';
 const PALETTE = ['#42a5f5', '#ffa726', '#66bb6a', '#f06292', '#ab47bc', '#26a69a', '#ffee58'];
 const DEFAULT_FX = {
-  pt: 'pop', text: 'fade', tex: 'fade', title: 'fade', node: 'pop', img: 'fade',
+  pt: 'pop', text: 'fade', tex: 'fade', title: 'fade', node: 'pop', img: 'fade', svg: 'fade',
+  code: 'fade', table: 'fade',
   box: 'grow', sphere: 'grow', cyl: 'grow', model: 'grow',
 };
-const DRAWABLE = new Set(['line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'edge', 'axes', 'plot', 'surf']);
+const DRAWABLE = new Set(['line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'edge', 'axes', 'plot', 'surf',
+  'part', 'wire', 'block', 'frame', 'wave']);
 
 const V = (a) => new THREE.Vector3(a[0], a[1], a[2] ?? 0);
 const isRef = (p) => p && !Array.isArray(p) && typeof p === 'object';
@@ -203,6 +209,10 @@ export class Runtime {
 
   /** World position of an entity anchor. */
   anchorWorld(e, anchor = 'center') {
+    if (e.pins?.[anchor]) {
+      e.obj.updateWorldMatrix(true, false);
+      return e.obj.localToWorld(e.pins[anchor].at.clone());
+    }
     if ((anchor === 'start' || anchor === 'end') && e.ends) {
       e.obj.updateWorldMatrix(true, false);
       return e.obj.localToWorld(e.ends[anchor === 'start' ? 0 : 1].clone());
@@ -230,6 +240,17 @@ export class Runtime {
     const w = this.anchorWorld(this.get(r.ref), r.anchor);
     const s = this.stage.worldToLocal(w).add(V(r.off ?? [0, 0, 0]));
     return this.stage.localToWorld(s);
+  }
+
+  /** Outward direction of a pin reference, in stage space (null if not a pin). */
+  pinDir(r) {
+    const e = this.entities.get(r.ref);
+    const pin = e?.pins?.[r.anchor];
+    if (!pin) return null;
+    e.obj.updateWorldMatrix(true, false);
+    const a = this.stage.worldToLocal(e.obj.localToWorld(pin.at.clone()));
+    const b = this.stage.worldToLocal(e.obj.localToWorld(pin.at.clone().add(pin.dir)));
+    return b.sub(a).normalize();
   }
 
   /** IR point → world (board space for plain vectors). */
@@ -375,6 +396,7 @@ H.set = function (c) {
   return this.change(c, (e) => {
     const parts = [];
     if (c.text !== undefined) e.setText?.(c.text);
+    if (c.focus) e.setFocus?.(c.focus);
     if (c.pos) parts.push(H.move.call(this, { target: c.target, to: c.pos }));
     if (c.rot) parts.push(H.rot.call(this, { target: c.target, rot: c.rot }));
     if (c.scale !== undefined) parts.push(H.scale.call(this, c));
@@ -413,7 +435,7 @@ H.spin = function (c) {
 };
 
 for (const op of ['pt', 'line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'text', 'tex', 'node', 'edge', 'img',
-  'axes', 'plot', 'surf', 'box', 'sphere', 'cyl', 'model'])
+  'axes', 'plot', 'surf', 'box', 'sphere', 'cyl', 'model', 'svg', 'part', 'wire', 'block', 'frame', 'code', 'table', 'wave'])
   H[op] = function (c) { return this.create(c); };
 
 // ───────────────────────────── builders ─────────────────────────────
@@ -434,6 +456,10 @@ function strokeEntity(e, spec, { width = 0.06, color = FG, dash = false, fillCol
   };
   const endHead = heads.end ? mkHead() : null;
   const startHead = heads.start ? mkHead() : null;
+  // Junction dots (wires): filled circles at the points the spec lists.
+  const dotMat = e.track(new THREE.MeshBasicMaterial({ color }), 'stroke');
+  const dotGeo = e.own(new THREE.CircleGeometry(Math.max(0.07, width * 1.6), 20));
+  const dots = [];
   let fill = null, fillMat = null;
   if (fillColor) fillMat = e.track(new THREE.MeshBasicMaterial({ color: fillColor, opacity: fillOpacity, depthWrite: false, side: THREE.DoubleSide }), 'fill');
 
@@ -464,6 +490,14 @@ function strokeEntity(e, spec, { width = 0.06, color = FG, dash = false, fillCol
       }
     }
     if (e.label && local.label) e.label.mesh.position.copy(local.label).add(e.labelShift ?? new THREE.Vector3());
+    local.dots = (s.dots ?? []).map(toL);
+    while (dots.length < local.dots.length) {
+      const m = new THREE.Mesh(dotGeo, dotMat);
+      m.renderOrder = 2;
+      e.body.add(m);
+      dots.push(m);
+    }
+    dots.forEach((m, i) => { if (local.dots[i]) m.position.copy(local.dots[i]); });
   };
   compute();
 
@@ -481,6 +515,7 @@ function strokeEntity(e, spec, { width = 0.06, color = FG, dash = false, fillCol
       if (tip) polys = [D.trimStart(first, headSize * 0.8), ...polys.slice(1)];
     }
     stroke.set(polys);
+    dots.forEach((m, i) => (m.visible = p > 0.95 && i < local.dots.length));
     e.factor.fill = p;
     e.applyOpacity();
   };
@@ -706,17 +741,37 @@ BUILD.img = function (e, c) {
 
 BUILD.model = function (e, c) {
   e.obj.position.copy(e.toParent(c.at));
-  e.rt.gltf.load(c.url, (g) => {
-    const root = g.scene;
+  const ext = c.url.split(/[?#]/)[0].split('.').pop().toLowerCase();
+  const fail = () => e.rt.log('warning', `line ${c.line}: model: could not load ${c.url}`);
+  const material = () => new THREE.MeshStandardMaterial({ color: c.color ?? '#b8c4d0', metalness: 0.35, roughness: 0.45 });
+  const place = (root) => {
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
     const k = (c.size ?? 3) / Math.max(size.x, size.y, size.z, 1e-6);
-    root.scale.setScalar(k);
-    root.position.copy(box.getCenter(new THREE.Vector3()).multiplyScalar(-k));
-    root.traverse((o) => { if (o.material) e.track(o.material, 'solid'); });
-    e.body.add(root);
+    const holder = new THREE.Group();
+    holder.add(root);
+    root.position.copy(box.getCenter(new THREE.Vector3())).multiplyScalar(-1);
+    holder.scale.setScalar(k);
+    holder.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => e.track(m, 'solid')); });
+    e.body.add(holder);
     e.applyOpacity();
-  }, undefined, () => e.rt.log('warning', `line ${c.line}: model: could not load ${c.url}`));
+  };
+  labelFor(e, c, new THREE.Vector3(0, -(c.size ?? 3) / 2 - 0.35, 0));
+  if (e.label) e.billboards.push(e.label.mesh); // stays readable while the model turns
+  if (ext === 'stl') {
+    new STLLoader().load(c.url, (geo) => {
+      geo.computeVertexNormals();
+      geo.rotateX(-Math.PI / 2); // CAD is Z-up; the board is Y-up
+      place(new THREE.Mesh(geo, material()));
+    }, undefined, fail);
+  } else if (ext === 'obj') {
+    new OBJLoader().load(c.url, (root) => {
+      root.traverse((o) => { if (o.isMesh) { o.material = material(); o.geometry.computeVertexNormals(); } });
+      place(root);
+    }, undefined, fail);
+  } else {
+    e.rt.gltf.load(c.url, (g) => place(g.scene), undefined, fail);
+  }
 };
 
 function solid(e, c, geo) {
@@ -942,4 +997,341 @@ BUILD.surf = function (e, c) {
     if (c.fill) tmp.set(c.fill);
     colors.set([tmp.r, tmp.g, tmp.b], k * 3);
   }
+};
+
+// ── engineering diagrams ──
+
+/** A schematic symbol from parts.js, with pins in obj-local space. */
+BUILD.part = function (e, c) {
+  const sym = symbol(c.kind);
+  const k = c.size ?? 1;
+  const rot = (c.rot ?? 0) * DEG, cs = Math.cos(rot), sn = Math.sin(rot);
+  const flip = c.flip ? -1 : 1;
+  const xf = ([x, y], scale = k) => {
+    const xx = x * flip * scale, yy = y * scale;
+    return new THREE.Vector3(xx * cs - yy * sn, xx * sn + yy * cs, 0);
+  };
+  e.obj.position.copy(e.toParent(c.at));
+  const color = c.color ?? FG;
+  const lines = sym.lines.map((pl) => pl.map((q) => xf(q)));
+  const stroke = e.own(new D.Stroke({ color, width: 0.045 }));
+  e.track(stroke.material, 'stroke');
+  e.body.add(stroke.obj);
+  const fillMat = e.track(new THREE.MeshBasicMaterial({ color, depthWrite: false, side: THREE.DoubleSide }), 'stroke');
+  for (const f of sym.fills) {
+    const m = D.fillMesh(f.map((q) => xf(q)), color, 1);
+    m.material.dispose();
+    m.material = fillMat;
+    e.body.add(m);
+  }
+  for (const t of sym.texts) {
+    const tp = e.own(new TextPlane(t.value && c.value ? c.value : t.text, { size: t.size * k, color }));
+    e.track(tp.material, 'text');
+    tp.mesh.position.copy(xf([t.x, t.y]));
+    e.body.add(tp.mesh);
+  }
+  e.pins = {};
+  for (const [name, p] of Object.entries(sym.pins)) e.pins[name] = { at: xf(p.at), dir: xf(p.dir, 1).normalize() };
+  // Reference designator and value: above/below a wide part, beside a tall one
+  // (where its leads and wires aren't). vdd shows its value in the symbol.
+  const box = new THREE.Box3().setFromPoints(lines.flat());
+  const ctr = box.getCenter(new THREE.Vector3());
+  const tall = box.max.y - box.min.y > (box.max.x - box.min.x) * 1.2;
+  const body = new THREE.Box3().setFromPoints(lines.flat().filter((v) => Math.abs(v.y - ctr.y) < (box.max.y - ctr.y) * 0.6));
+  const side = tall ? Math.max(body.max.x, ctr.x + 0.2) + 0.2 : 0;
+  if (c.label !== undefined) {
+    e.addLabel(c.label, tall ? new THREE.Vector3(side, ctr.y + 0.22, 0) : new THREE.Vector3(ctr.x, box.max.y + 0.28, 0), tall ? 'left' : 'center');
+  }
+  if (c.value !== undefined && !sym.texts.some((t) => t.value)) {
+    const tp = e.own(new TextPlane(c.value, { size: 0.32, color: '#aab6c5', align: tall ? 'left' : 'center' }));
+    e.track(tp.material, 'label');
+    tp.mesh.position.add(tall ? new THREE.Vector3(side, ctr.y - (c.label !== undefined ? 0.22 : 0), 0) : new THREE.Vector3(ctr.x, box.min.y - 0.28, 0));
+    e.obj.add(tp.mesh);
+  }
+  e.render = (p) => {
+    stroke.set(D.partial(lines, p));
+    e.factor.fill = p;
+    e.applyOpacity();
+  };
+};
+
+/** Orthogonal wire between points/pins, with junction dots, arrow and bus mark. */
+BUILD.wire = function (e, c) {
+  const spec = () => {
+    const P = c.pts.map((pt) => {
+      const v = e.toParent(pt);
+      const dir = isRef(pt) && !e.axes ? e.rt.pinDir(pt) : null;
+      return { x: v.x, y: v.y, z: v.z, dir };
+    });
+    const pts = route(P, c.route ?? 'auto').map((q) => new THREE.Vector3(q.x, q.y, q.z));
+    // Label/bus mark on the longest segment.
+    let best = 0, bi = 0;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d = pts[i].distanceTo(pts[i + 1]);
+      if (d > best) { best = d; bi = i; }
+    }
+    const a = pts[bi], b = pts[Math.min(bi + 1, pts.length - 1)];
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const polys = [pts];
+    if (c.bus) {
+      const d = b.clone().sub(a).normalize(), n = new THREE.Vector3(-d.y, d.x, 0);
+      const s1 = mid.clone().addScaledVector(d, -0.12).addScaledVector(n, -0.18);
+      const s2 = mid.clone().addScaledVector(d, 0.12).addScaledVector(n, 0.18);
+      polys.push([s1, s2]);
+    }
+    const dots = [];
+    if (c.dot === 'start' || c.dot === 'both') dots.push(pts[0]);
+    if (c.dot === 'end' || c.dot === 'both') dots.push(pts[pts.length - 1]);
+    return { polys, ends: [pts[0], pts[pts.length - 1]], label: mid, dots, live: c.pts.some(isRef) };
+  };
+  const text = c.label ?? (c.bus ? String(c.bus) : undefined);
+  if (text !== undefined) { e.addLabel(text, new THREE.Vector3()); e.labelShift = new THREE.Vector3(0.12, 0.3, 0); }
+  strokeEntity(e, spec, { width: c.width ?? 0.04, color: c.color ?? '#8ec5ff', dash: c.dash, heads: { end: !!c.arrow } });
+};
+
+const portList = (s) => String(s ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+
+/** Hierarchical block: a box with named ports on its sides. */
+BUILD.block = function (e, c) {
+  const [w, h] = c.size;
+  e.obj.position.copy(e.toParent(c.at));
+  const color = c.color ?? '#7fa7d9';
+  const outline = D.roundedRectPoints(w, h, Math.min(0.15, w / 4, h / 4));
+  const stroke = e.own(new D.Stroke({ color, width: 0.05 }));
+  e.track(stroke.material, 'stroke');
+  e.body.add(stroke.obj);
+  const fillMat = e.track(new THREE.MeshBasicMaterial({ color: c.fill ?? '#16202c', opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }), 'fill');
+  const fill = D.fillMesh(outline, '#000', 1);
+  fill.material.dispose();
+  fill.material = fillMat;
+  e.body.add(fill);
+  e.shape = { kind: 'box', hw: w / 2, hh: h / 2 };
+  // With ports on the sides, the title sits in a band at the top and the
+  // ports share the space below it, so names never run into the title.
+  const band = portList(c.in).length + portList(c.out).length > 0 && portList(c.top).length === 0;
+  let sideTop = h / 2;
+  if (c.text) {
+    const tp = e.own(new TextPlane(c.text, { size: 0.42, color: FG, weight: 700 }));
+    e.track(tp.material, 'text');
+    tp.mesh.position.z = 0.01;
+    if (band) {
+      tp.mesh.position.y = h / 2 - 0.08 - tp.height / 2;
+      sideTop = h / 2 - 0.08 - tp.height;
+    }
+    e.body.add(tp.mesh);
+  }
+  e.pins = {};
+  const ticks = [];
+  const side = (names, place) => names.forEach((n, i) => {
+    const { at, dir, text, align } = place(i, names.length);
+    e.pins[n] = { at, dir };
+    ticks.push([at, at.clone().addScaledVector(dir, 0.12)]);
+    const tp = e.own(new TextPlane(n, { size: 0.26, color: '#aab6c5', align }));
+    e.track(tp.material, 'label');
+    tp.mesh.position.add(text);
+    tp.mesh.position.z = 0.01;
+    e.obj.add(tp.mesh);
+  });
+  const V3 = (x, y) => new THREE.Vector3(x, y, 0);
+  const sideY = (i, n) => sideTop - ((i + 1) * (sideTop + h / 2)) / (n + 1);
+  side(portList(c.in), (i, n) => { const y = sideY(i, n); return { at: V3(-w / 2, y), dir: V3(-1, 0), text: V3(-w / 2 + 0.12, y), align: 'left' }; });
+  side(portList(c.out), (i, n) => { const y = sideY(i, n); return { at: V3(w / 2, y), dir: V3(1, 0), text: V3(w / 2 - 0.12, y), align: 'right' }; });
+  side(portList(c.top), (i, n) => { const x = -w / 2 + ((i + 1) * w) / (n + 1); return { at: V3(x, h / 2), dir: V3(0, 1), text: V3(x, h / 2 - 0.22), align: 'center' }; });
+  side(portList(c.bottom), (i, n) => { const x = -w / 2 + ((i + 1) * w) / (n + 1); return { at: V3(x, -h / 2), dir: V3(0, -1), text: V3(x, -h / 2 + 0.22), align: 'center' }; });
+  if (c.label !== undefined) e.addLabel(c.label, V3(0, h / 2 + 0.3));
+  e.render = (p) => {
+    stroke.set(D.partial([outline, ...ticks], p));
+    e.factor.fill = p;
+    e.applyOpacity();
+  };
+};
+
+/** Titled boundary around other entities (subsystems); follows them. */
+BUILD.frame = function (e, c) {
+  const members = c.ids.map((id) => e.rt.get(id));
+  const pad = c.pad ?? 0.35;
+  const stage = e.rt.stage;
+  const spec = () => {
+    const box = new THREE.Box3();
+    for (const m of members) {
+      const b = new THREE.Box3().setFromObject(m.obj);
+      if (b.isEmpty()) continue;
+      box.union(new THREE.Box3().setFromPoints([stage.worldToLocal(b.min.clone()), stage.worldToLocal(b.max.clone())]));
+    }
+    if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 0));
+    const min = box.min, max = box.max;
+    const w = max.x - min.x + pad * 2, h = max.y - min.y + pad * 2;
+    const cx = (min.x + max.x) / 2, cy = (min.y + max.y) / 2;
+    const toP = (v) => e.parentObj.worldToLocal(stage.localToWorld(v));
+    const pts = D.roundedRectPoints(w, h, 0.25).map((q) => toP(new THREE.Vector3(q.x + cx, q.y + cy, -0.02)));
+    return { polys: [pts], fill: c.fill ? pts : null, label: toP(new THREE.Vector3(min.x - pad, max.y + pad, 0)), live: true };
+  };
+  if (c.title !== undefined) {
+    e.addLabel(c.title, new THREE.Vector3(), 'left');
+    e.label.material.color.set('#aab6c5');
+    e.labelShift = new THREE.Vector3(0.05, 0.28, 0);
+  }
+  strokeEntity(e, spec, { width: 0.035, color: c.color ?? '#5f7590', dash: c.dash ?? true, fillColor: c.fill ?? null, fillOpacity: 0.12 });
+};
+
+/** A canvas panel (code, table) shown at `at`, with per-row pins on its right edge. */
+function panelEntity(e, c, draw, rowsOf, prefix, defaultSize) {
+  const size = c.size ?? defaultSize;
+  const tp = e.own(new TextPlane(' ', { size, color: '#ffffff' }));
+  e.track(tp.material, 'text');
+  e.body.add(tp.mesh);
+  e.obj.position.copy(e.toParent(c.at));
+  if (e.in3D) e.billboards.push(tp.mesh);
+  let state = { ...c };
+  const redraw = () => {
+    const { canvas, lineHeightPx, rowY } = draw(state);
+    tp.setCanvas(canvas, (canvas.height / lineHeightPx) * size * 1.0);
+    // Pins at the right edge of each numbered row (L1…, R1…).
+    e.pins = {};
+    const H = tp.height, W = tp.width;
+    rowY(canvas).forEach((ypx, i) => {
+      e.pins[`${prefix}${i + 1}`] = { at: new THREE.Vector3(W / 2, H / 2 - (ypx / canvas.height) * H, 0), dir: new THREE.Vector3(1, 0, 0) };
+    });
+  };
+  redraw();
+  e.setText = (t) => { state = { ...state, [rowsOf]: t }; redraw(); };
+  e.setFocus = (f) => { state = { ...state, focus: f }; redraw(); };
+  labelFor(e, c, new THREE.Vector3(0, tp.height / 2 + 0.3, 0));
+}
+
+BUILD.code = function (e, c) {
+  panelEntity(e, c, (st) => {
+    const r = drawCode(st.text, { lang: st.lang, lines: st.lines ?? true, focus: st.focus, title: st.title });
+    const n = String(st.text).split('\n').length;
+    return { ...r, rowY: () => Array.from({ length: n }, (_, i) => r.firstRowPx + i * r.lineHeightPx + r.lineHeightPx / 2) };
+  }, 'text', 'L', 0.36);
+};
+
+BUILD.table = function (e, c) {
+  panelEntity(e, c, (st) => {
+    const rows = Array.isArray(st.rows) ? st.rows : String(st.rows).split('\n');
+    const r = drawTable(rows, { header: st.header ?? true, focus: st.focus });
+    const first = (st.header ?? true) ? 1 : 0;
+    return { ...r, rowY: () => rows.slice(first).map((_, i) => 2 + (i + first) * r.lineHeightPx + r.lineHeightPx / 2) };
+  }, 'rows', 'R', 0.5);
+};
+
+/** Digital timing diagram (see parseWave for the pattern language). */
+BUILD.wave = function (e, c) {
+  const rows = parseWave(c.rows);
+  const step = c.step ?? 0.5, h = c.size ?? 0.45, gap = h * 0.9, t = Math.min(0.08, step * 0.2);
+  e.obj.position.copy(e.toParent(c.at));
+  const nsteps = Math.max(...rows.map((r) => r.steps.length));
+  const W = nsteps * step, rowH = h + gap, Htot = rows.length * rowH;
+  const nameW = Math.max(...rows.map((r) => r.name.length)) * Math.max(0.32, h * 0.62) * 0.55 + 0.3;
+  const x0 = -(W + nameW) / 2 + nameW, yTop = Htot / 2; // names on the left, centred overall
+  const polys = [], hatch = [], texts = [];
+  e.pins = {};
+  rows.forEach((row, ri) => {
+    const ym = yTop - ri * rowH - rowH / 2, hi = ym + h / 2, lo = ym - h / 2;
+    const lvl = (v) => (v === '1' ? hi : v === '0' ? lo : ym);
+    texts.push({ text: row.name, pos: new THREE.Vector3(x0 - 0.25, ym, 0), align: 'right', size: Math.max(0.32, h * 0.62) });
+    if (/^[A-Za-z_]\w*$/.test(row.name)) e.pins[row.name] = { at: new THREE.Vector3(x0 + row.steps.length * step, ym, 0), dir: new THREE.Vector3(1, 0, 0) };
+    let pen = null;
+    const end = () => { if (pen && pen.length > 1) polys.push(pen); pen = null; };
+    for (let j = 0; j < row.steps.length; j++) {
+      const s = row.steps[j], xa = x0 + j * step, xb = xa + step;
+      if (s.v === '0' || s.v === '1' || s.v === 'z') {
+        const y = lvl(s.v);
+        if (!pen) pen = [new THREE.Vector3(xa, y, 0)];
+        else if (pen[pen.length - 1].y !== y) pen.push(new THREE.Vector3(xa, y, 0));
+        pen.push(new THREE.Vector3(xb, y, 0));
+      } else if (s.v === 'p' || s.v === 'n') {
+        const [a, b] = s.v === 'p' ? [hi, lo] : [lo, hi], xm = (xa + xb) / 2;
+        if (!pen) pen = [new THREE.Vector3(xa, b, 0)];
+        pen.push(new THREE.Vector3(xa, a, 0), new THREE.Vector3(xm, a, 0), new THREE.Vector3(xm, b, 0), new THREE.Vector3(xb, b, 0));
+      } else { // '=' bus value or 'x' unknown: a run until the value changes
+        end();
+        let k = j;
+        while (k + 1 < row.steps.length && row.steps[k + 1].v === s.v && !row.steps[k + 1].start) k++;
+        const xe = x0 + (k + 1) * step;
+        const V3 = (x, y) => new THREE.Vector3(x, y, 0);
+        polys.push([V3(xa, ym), V3(xa + t, hi), V3(xe - t, hi), V3(xe, ym)], [V3(xa, ym), V3(xa + t, lo), V3(xe - t, lo), V3(xe, ym)]);
+        if (s.v === 'x') for (let x = xa + t + 0.12; x < xe - t; x += 0.16) hatch.push([V3(x - 0.1, lo), V3(x + 0.04, hi)]);
+        if (s.label) texts.push({ text: s.label, pos: V3((xa + xe) / 2, ym, 0), align: 'center', size: h * 0.55 });
+        j = k;
+      }
+    }
+    end();
+  });
+  // Faint step grid.
+  const grid = [];
+  for (let j = 0; j <= nsteps; j++) grid.push([new THREE.Vector3(x0 + j * step, yTop, -0.01), new THREE.Vector3(x0 + j * step, yTop - Htot, -0.01)]);
+  const gridStroke = e.own(new D.Stroke({ color: FG, width: 0.012 }));
+  gridStroke.material.opacity = 0.12;
+  e.track(gridStroke.material, 'label');
+  gridStroke.set(grid);
+  e.body.add(gridStroke.obj);
+  const color = c.color ?? '#7ee787';
+  const stroke = e.own(new D.Stroke({ color, width: 0.035 }));
+  e.track(stroke.material, 'stroke');
+  e.body.add(stroke.obj);
+  const hatchStroke = e.own(new D.Stroke({ color: '#ef5350', width: 0.02 }));
+  e.track(hatchStroke.material, 'stroke');
+  e.body.add(hatchStroke.obj);
+  for (const tx of texts) {
+    const tp = e.own(new TextPlane(tx.text, { size: tx.size, color: tx.align === 'right' ? FG : '#e6edf3', align: tx.align }));
+    e.track(tp.material, 'label');
+    tp.mesh.position.copy(tx.pos);
+    e.obj.add(tp.mesh);
+  }
+  // Reveal left to right.
+  const clipX = (pls, xmax) => pls.map((pl) => {
+    const out = [pl[0]];
+    for (let i = 1; i < pl.length; i++) {
+      const a = pl[i - 1], b = pl[i];
+      if (b.x <= xmax + 1e-9) { out.push(b); continue; }
+      if (a.x < xmax) out.push(a.clone().lerp(b, (xmax - a.x) / (b.x - a.x)));
+      break;
+    }
+    return out;
+  }).filter((pl) => pl.length > 1 && pl[0].x <= xmax);
+  e.render = (p) => {
+    const xmax = x0 + W * p;
+    stroke.set(clipX(polys, xmax));
+    hatchStroke.set(clipX(hatch, xmax));
+  };
+  labelFor(e, c, new THREE.Vector3(0, Htot / 2 + 0.3, 0));
+};
+
+/** SVG from a URL or inline markup, rasterized sharply at board size. */
+BUILD.svg = function (e, c) {
+  const width = c.size ?? 4;
+  const tp = e.own(new TextPlane(' ', { size: 0.4, color: '#ffffff' }));
+  e.track(tp.material, 'text');
+  e.body.add(tp.mesh);
+  e.obj.position.copy(e.toParent(c.at));
+  labelFor(e, c, new THREE.Vector3(0, -width / 3, 0));
+  (async () => {
+    const markup = c.src.trim().startsWith('<') ? c.src : await (await fetch(c.src)).text();
+    const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+    const svg = doc.documentElement;
+    if (svg.nodeName !== 'svg') throw new Error('not an SVG document');
+    const vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+    let w = parseFloat(svg.getAttribute('width')) || vb[2] || 300, h = parseFloat(svg.getAttribute('height')) || vb[3] || 150;
+    if (!svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    const px = 2048 / Math.max(w, h);
+    svg.setAttribute('width', w * px);
+    svg.setAttribute('height', h * px);
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(w * px);
+      canvas.height = Math.round(h * px);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      tp.setCanvas(canvas, (width * h) / w);
+      if (e.label) e.label.mesh.position.y = -tp.height / 2 - 0.3;
+      e.applyOpacity();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  })().catch((err) => e.rt.log('warning', `line ${c.line}: svg: ${err.message}`));
 };

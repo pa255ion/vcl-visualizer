@@ -65,6 +65,12 @@ export class TextPlane {
     this.mesh.position.x = this.align === 'left' ? (h * aspect) / 2 : this.align === 'right' ? -(h * aspect) / 2 : 0;
   }
 
+  /** Show an arbitrary canvas, `height` board units tall (code, tables, SVG). */
+  setCanvas(canvas, height) {
+    this.text = null;
+    this.#apply(canvas, height, canvas.width / canvas.height);
+  }
+
   /** Replace the raster with LaTeX (async). */
   async setTex(tex) {
     this.text = tex;

@@ -13,6 +13,31 @@ LLM reply ──text chunks──▶ vcl serve (Zig) ──JSON IR over WebSocke
 * **Language:** [docs/SPEC.md](docs/SPEC.md). For a system prompt: [docs/PRIMER.md](docs/PRIMER.md).
 * **Renderer contract** (for new front ends such as Unity): [docs/IR.md](docs/IR.md).
 
+## What it can show
+
+| Area | Ops |
+|---|---|
+| Geometry and annotation | points, lines, arrows, paths, polygons, rectangles, circles, angle marks, text, LaTeX |
+| Math | 2D and 3D axes, function and parametric plots, surfaces `z = f(x, y)` |
+| Diagrams | labelled nodes and edges; hierarchical `block`s with named ports, `frame`s around subsystems |
+| Circuits | 26 schematic `part`s (passives, sources, diodes, BJTs, MOSFETs, op-amp, logic gates, D flip-flop, mux) with named pins, and right-angle `wire`s with junction dots and bus widths |
+| Code and data | syntax-highlighted `code` with line focus, `table`s (truth tables) with row focus, timing diagrams (`wave`) |
+| Your files | `svg` (URL or inline), `img`, 3D `model`s from glTF/GLB, STL and OBJ |
+| 3D | boxes, spheres, cylinders, models; rotate, spin, and walk around them in VR |
+| Teaching | `say`, `point` (the robot points), `hl` pulses, `set … focus=` steps through code/tables, timed and parallel beats |
+
+Pins (`R1.a`, `cpu.clk`, `c.L3`, `t.R2`, `w.clk`) work anywhere a point does,
+so wires and arrows attach to the right spot without the model computing
+coordinates, and wires drawn between pins follow the parts when they move.
+
+Not there yet:
+- Automatic layout: the model chooses coordinates. Lint warnings catch blocks
+  that are too small, but not other overlaps.
+- Smart wire routing: the routes are simple right-angle shapes. A wire doubling
+  back around a part needs corner points.
+- Analog waveforms on a time axis (use `plot`), state machines (use
+  `node`/`edge`), and text-diff views.
+
 ## Quick start
 
 ```sh
@@ -22,6 +47,10 @@ zig build run -- serve      # http://127.0.0.1:8080
 ```
 
 Open http://127.0.0.1:8080, click **Editor**, pick a lesson, press **Run** (Ctrl+Enter).
+
+Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
+go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then
+at `assets/<name>`, and the tutor tells Claude which ones exist.
 
 Feed it from anywhere:
 

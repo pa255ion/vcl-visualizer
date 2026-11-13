@@ -2,10 +2,12 @@
 //!
 //!   vcl check FILE...            report diagnostics (exit 1 on errors)
 //!   vcl compile [--mixed] FILE   print the JSON IR, one command per line
-//!   vcl serve [--port N] [--host H] [--root DIR]
+//!   vcl serve [--port N] [--host H] [--root DIR] [--assets DIR]
 //!
 //! The server:
 //!   GET  /            the viewer (static files from --root, default "viewer")
+//!   GET  /assets/…    files you provide (--assets DIR, default ROOT/assets):
+//!                     SVGs, images, glTF/STL/OBJ models; /assets/index.json lists them
 //!   GET  /ws          WebSocket: receives IR; may also send VCL text chunks
 //!                     (?mode=mixed for prose+fences, ?listen=0 to only send)
 //!   POST /vcl         body = VCL text (?mode=mixed, ?pace=MS between lines);
@@ -25,7 +27,7 @@ const usage =
     \\usage:
     \\  vcl check FILE...              report diagnostics
     \\  vcl compile [--mixed] FILE     print JSON IR (one command per line)
-    \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer]
+    \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer] [--assets DIR]
     \\
 ;
 
@@ -135,6 +137,8 @@ const Hub = struct {
     io: Io,
     gpa: Allocator,
     root: Io.Dir,
+    /// Where /assets/… comes from (null: no assets directory).
+    assets: ?Io.Dir,
     mutex: Io.Mutex = .init,
     scene: vcl.Scene,
     clients: std.ArrayList(*Client) = .empty,
@@ -236,6 +240,7 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
     var port: u16 = 8080;
     var host: []const u8 = "127.0.0.1";
     var root_path: []const u8 = "viewer";
+    var assets_path: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -246,6 +251,8 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
             host = args[i + 1];
         } else if (std.mem.eql(u8, a, "--root")) {
             root_path = args[i + 1];
+        } else if (std.mem.eql(u8, a, "--assets")) {
+            assets_path = args[i + 1];
         } else return error.UnknownOption;
         i += 1;
     }
@@ -253,7 +260,14 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
     var root = try Io.Dir.cwd().openDir(io, root_path, .{});
     defer root.close(io);
 
-    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .scene = vcl.Scene.init(gpa) };
+    var assets: ?Io.Dir = if (assets_path) |ap|
+        try Io.Dir.cwd().openDir(io, ap, .{ .iterate = true })
+    else
+        root.openDir(io, "assets", .{ .iterate = true }) catch null;
+    defer if (assets) |*d| d.close(io);
+    if (assets_path) |ap| std.log.info("assets: {s}/ at /assets/", .{ap});
+
+    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .scene = vcl.Scene.init(gpa) };
     defer hub.scene.deinit();
 
     const addr = try Io.net.IpAddress.parse(host, port);
@@ -453,14 +467,27 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         return true;
     }
 
-    // Static files.
+    if (std.mem.eql(u8, path, "/assets/index.json")) {
+        const listing = try assetIndex(hub);
+        defer gpa.free(listing);
+        try req.respond(listing, .{ .extra_headers = &.{ cors, .{ .name = "content-type", .value = "application/json" }, .{ .name = "cache-control", .value = "no-cache" } } });
+        return true;
+    }
+
+    // Static files (and /assets/… from the assets directory).
+    var dir = hub.root;
     var rel = if (std.mem.eql(u8, path, "/")) "index.html" else path[1..];
+    if (std.mem.startsWith(u8, path, "/assets/")) if (hub.assets) |a| {
+        dir = a;
+        rel = path["/assets/".len..];
+    };
     if (rel.len == 0 or std.mem.indexOf(u8, rel, "..") != null or rel[0] == '/') {
         try req.respond("bad path\n", .{ .status = .bad_request });
         return true;
     }
-    if (std.mem.endsWith(u8, rel, "/")) rel = try std.fmt.allocPrint(gpa, "{s}index.html", .{rel});
-    const data = hub.root.readFileAlloc(hub.io, rel, gpa, .limited(64 << 20)) catch |err| {
+    var index_buf: [1024]u8 = undefined;
+    if (std.mem.endsWith(u8, rel, "/")) rel = std.fmt.bufPrint(&index_buf, "{s}index.html", .{rel}) catch rel;
+    const data = dir.readFileAlloc(hub.io, rel, gpa, .limited(64 << 20)) catch |err| {
         const status: std.http.Status = if (err == error.FileNotFound) .not_found else .internal_server_error;
         try req.respond(@errorName(err), .{ .status = status });
         return true;
@@ -473,6 +500,39 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
     return true;
 }
 
+/// {"files":["chip.svg","models/arm.stl",…]}: what the teacher can show.
+fn assetIndex(hub: *Hub) ![]u8 {
+    const gpa = hub.gpa;
+    var names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (names.items) |n| gpa.free(n);
+        names.deinit(gpa);
+    }
+    if (hub.assets) |a| {
+        var walker = try a.walk(gpa);
+        defer walker.deinit();
+        while (try walker.next(hub.io)) |e| {
+            if (e.kind != .file or names.items.len >= 500) continue;
+            if (std.mem.indexOf(u8, e.path, "/.") != null or e.path[0] == '.') continue;
+            try names.append(gpa, try gpa.dupe(u8, e.path));
+        }
+    }
+    std.mem.sort([]u8, names.items, {}, struct {
+        fn lt(_: void, x: []u8, y: []u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    var aw: Io.Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+    try aw.writer.writeAll("{\"files\":[");
+    for (names.items, 0..) |n, i| {
+        if (i > 0) try aw.writer.writeByte(',');
+        try vcl.writeJsonString(&aw.writer, n);
+    }
+    try aw.writer.writeAll("]}");
+    return aw.toOwnedSlice();
+}
+
 fn mimeType(path: []const u8) []const u8 {
     const table = [_]struct { []const u8, []const u8 }{
         .{ ".html", "text/html; charset=utf-8" },     .{ ".js", "text/javascript; charset=utf-8" },
@@ -481,7 +541,10 @@ fn mimeType(path: []const u8) []const u8 {
         .{ ".png", "image/png" },                      .{ ".jpg", "image/jpeg" },
         .{ ".svg", "image/svg+xml" },                  .{ ".glb", "model/gltf-binary" },
         .{ ".gltf", "model/gltf+json" },               .{ ".vcl", "text/plain; charset=utf-8" },
-        .{ ".md", "text/plain; charset=utf-8" },
+        .{ ".md", "text/plain; charset=utf-8" },       .{ ".stl", "model/stl" },
+        .{ ".obj", "model/obj" },                      .{ ".mtl", "text/plain; charset=utf-8" },
+        .{ ".bin", "application/octet-stream" },       .{ ".webp", "image/webp" },
+        .{ ".gif", "image/gif" },                      .{ ".txt", "text/plain; charset=utf-8" },
     };
     for (table) |e| if (std.mem.endsWith(u8, path, e[0])) return e[1];
     return "application/octet-stream";

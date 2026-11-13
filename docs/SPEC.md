@@ -29,7 +29,20 @@ Design goals, in priority order:
 | `key=value` | Optional named arguments, any order, after or between positionals. |
 | `# ...` | Comment: `#` at the start of a line, or `#` followed by a space. (`#f80` is a colour.) |
 
-Blank lines are ignored. Strings cannot span lines; use `\n` inside a string.
+Blank lines are ignored. A quoted string stays on one line (`\n` makes a
+newline). For multi-line text, end the command with `<<TAG` (any name, usually
+`END`): the following lines, up to a line containing only `TAG`, become the
+command's last string argument, verbatim. For an op taking several strings
+(`table`, `wave`) each non-empty line is one string. Inside a block nothing is
+interpreted, not even ```` ``` ```` in mixed mode.
+
+```
+c: code 0,0 lang=c <<END
+int main(void) {
+    return 0;
+}
+END
+```
 
 ### Value forms
 
@@ -43,7 +56,11 @@ Blank lines are ignored. Strings cannot span lines; use `\n` inside a string.
 | range | `-3..3` | |
 | bool | `true false on off yes no 1 0` | |
 
-Anchors: `center top bottom left right front back start end`.
+Anchors: `center top bottom left right front back start end`, plus **pins**:
+named connection points of parts (`R1.a`, `U1.y`), block ports (`cpu.clk`),
+code lines (`c.L3`), table rows (`t.R2`) and timing-diagram signals (`w.clk`).
+The parser knows every entity's pins and rejects unknown ones with a list of
+the valid names.
 `start`/`end` are the endpoints of lines, arrows and paths (for anything else
 they mean `left`/`right`). Anchors are resolved by the renderer at the moment
 the command runs, so they follow entities that have moved.
@@ -139,7 +156,29 @@ log log2 floor ceil round min max pow sign mod`.
 
 3D ops also take `wire=bool`.
 
-### 4.6 Change things
+### 4.6 Engineering diagrams
+
+| Op | Arguments | Keys / pins |
+|---|---|---|
+| `part` | `P KIND` | `rot=N` (degrees, counter-clockwise) `flip=bool` `value=S` `size=N`. Kinds and pins: `resistor capacitor inductor vsource isource battery switch` (a, b) · `diode led` (a, k) · `ground vdd` (a) · `npn pnp` (b, c, e) · `nmos pmos` (g, d, s) · `opamp` (inp, inn, out) · `and or nand nor xor xnor` (a, b, y) · `not buf` (a, y) · `dff` (d, clk, q, qn) · `mux2` (a, b, s, y). Two-pin parts lie along x with `a` on the left. |
+| `wire` | `P P…` | right-angle route through the points; pins are left along their direction. `route=auto\|hv\|vh\|direct` `dot=none\|start\|end\|both` (junction dots) `arrow=bool` `bus=N` (slash + width) `width` `dash` |
+| `block` | `P V [S]` | box of size `w,h` with a title; `in=` `out=` `top=` `bottom=` comma-separated port names become pins on that side. Warns when too small for its title and ports. |
+| `frame` | `ID…` | dashed, titled boundary around entities that follows them; `title=S` `pad=N` `fill=C`. Frames can contain frames. |
+
+### 4.7 Panels
+
+| Op | Arguments | Keys |
+|---|---|---|
+| `code` | `P S` | syntax-highlighted source (`<<END` block); `lang=` (c cpp zig rust python js ts java go verilog vhdl asm sh…) `title=S` `lines=bool` `focus=R` (highlight lines, dim the rest; `set c focus=` moves it) `size=N` (line height). Pins `L1…` |
+| `table` | `P S…` | one string per row, cells split by `\|`; `header=bool` (default true) `focus=R` (data rows) `size=N`. Pins `R1…` |
+| `wave` | `P S…` | timing diagram, one row per signal: `"name: pattern [\| labels]"` with `0 1` levels, `z` high-Z, `x` unknown, `.` repeat, `=` (or `2`–`9`) a bus value named by the next label, `p`/`n` one clock period. `step=N` `size=N`. Pins: signal names. |
+| `svg` | `P S` | URL or inline markup (`<<END`), rasterized sharply; `size=N` (width) |
+
+`model` loads glTF/GLB, STL (CAD, Z-up) and OBJ by file extension, scaled to
+`size` (largest dimension). With `vcl serve --assets DIR` your own files are
+at `assets/…`.
+
+### 4.8 Change things
 
 | Op | Arguments | Keys / effect |
 |---|---|---|
@@ -148,7 +187,7 @@ log log2 floor ceil round min max pow sign mod`.
 | `scale` | `ID N` | animate uniform scale |
 | `color` | `ID C` | animate colour |
 | `fade` | `ID N` | animate opacity (0 hides but keeps) |
-| `set` | `ID` | any of `pos=P rot=V scale=N color=C opacity=N text=S` |
+| `set` | `ID` | any of `pos=P rot=V scale=N color=C opacity=N text=S focus=R` |
 | `hl` | `ID…` | brief highlight pulse; `color=C` |
 | `spin` | `ID V` | continuous rotation, degrees/second per axis; `0,0,0` stops |
 | `group` | `ID…` | needs a name; bundles entities so they move/rotate together |

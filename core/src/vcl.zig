@@ -29,7 +29,7 @@ pub const Param = struct {
     many: bool = false,
     min: u8 = 1,
     max: u8 = 255,
-    /// For `.word`: the accepted values.
+    /// For `.word`: the accepted values (empty: any plain word, e.g. a language name).
     words: []const []const u8 = &.{},
     /// For `.id`: the op that created the referenced entity must be this.
     of_op: ?[]const u8 = null,
@@ -71,6 +71,22 @@ const fill = P("fill", .color);
 const size = P("size", .num);
 const wire = P("wire", .boolean);
 
+/// Schematic symbols and their pins (the renderer draws them; see viewer/js/parts.js).
+pub const part_pins = [_]struct { []const u8, []const u8 }{
+    .{ "resistor", "a,b" },  .{ "capacitor", "a,b" }, .{ "inductor", "a,b" },   .{ "vsource", "a,b" },
+    .{ "isource", "a,b" },   .{ "battery", "a,b" },   .{ "switch", "a,b" },     .{ "diode", "a,k" },
+    .{ "led", "a,k" },       .{ "ground", "a" },      .{ "vdd", "a" },          .{ "npn", "b,c,e" },
+    .{ "pnp", "b,c,e" },     .{ "nmos", "g,d,s" },    .{ "pmos", "g,d,s" },     .{ "opamp", "inp,inn,out" },
+    .{ "and", "a,b,y" },     .{ "or", "a,b,y" },      .{ "nand", "a,b,y" },     .{ "nor", "a,b,y" },
+    .{ "xor", "a,b,y" },     .{ "xnor", "a,b,y" },    .{ "not", "a,y" },        .{ "buf", "a,y" },
+    .{ "dff", "d,clk,q,qn" }, .{ "mux2", "a,b,s,y" },
+};
+const part_kind_names = blk: {
+    var n: [part_pins.len][]const u8 = undefined;
+    for (part_pins, 0..) |pp, i| n[i] = pp[0];
+    break :blk n;
+};
+
 pub const ops = [_]Op{
     // flow & talk
     .{ .name = "wait", .kind = .flow, .pos = &.{P("secs", .num)}, .dur = 0, .replay = false },
@@ -93,6 +109,22 @@ pub const ops = [_]Op{
     .{ .name = "node", .kind = .draw, .pos = &.{ P("at", .point), P("text", .str) }, .keys = &.{ W("shape", &.{ "circle", "box", "pill", "none" }), fill, size }, .dur = 0.5 },
     .{ .name = "edge", .kind = .draw, .pos = &.{ P("from", .id), P("to", .id) }, .keys = &.{ W("dir", &.{ "fwd", "back", "both", "none" }), P("bend", .num), width, dash }, .dur = 0.5 },
     .{ .name = "img", .kind = .draw, .pos = &.{ P("at", .point), P("url", .str) }, .keys = &.{size}, .dur = 0.6 },
+    .{ .name = "svg", .kind = .draw, .pos = &.{ P("at", .point), P("src", .str) }, .keys = &.{size}, .dur = 0.6 },
+    // engineering diagrams
+    .{ .name = "part", .kind = .draw, .pos = &.{ P("at", .point), W("kind", &part_kind_names) }, .keys = &.{ P("rot", .num), P("flip", .boolean), P("value", .str), size }, .dur = 0.5 },
+    .{ .name = "wire", .kind = .draw, .pos = &.{.{ .name = "pts", .ty = .point, .many = true, .min = 2 }}, .keys = &.{
+        W("route", &.{ "auto", "hv", "vh", "direct" }), W("dot", &.{ "none", "start", "end", "both" }),
+        P("arrow", .boolean), P("bus", .num), width, dash,
+    }, .dur = 0.5 },
+    .{ .name = "block", .kind = .draw, .pos = &.{ P("at", .point), P("size", .vec), .{ .name = "text", .ty = .str, .opt = true } }, .keys = &.{
+        P("in", .str), P("out", .str), P("top", .str), P("bottom", .str), fill,
+    }, .dur = 0.6 },
+    .{ .name = "frame", .kind = .draw, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .keys = &.{ P("title", .str), P("pad", .num), dash, fill }, .dur = 0.5 },
+    .{ .name = "code", .kind = .draw, .pos = &.{ P("at", .point), P("text", .str) }, .keys = &.{
+        .{ .name = "lang", .ty = .word }, size, P("lines", .boolean), P("focus", .range), P("title", .str),
+    }, .dur = 0.6 },
+    .{ .name = "table", .kind = .draw, .pos = &.{ P("at", .point), .{ .name = "rows", .ty = .str, .many = true } }, .keys = &.{ size, P("header", .boolean), P("focus", .range) }, .dur = 0.6 },
+    .{ .name = "wave", .kind = .draw, .pos = &.{ P("at", .point), .{ .name = "rows", .ty = .str, .many = true } }, .keys = &.{ P("step", .num), size }, .dur = 1.0 },
     // graphs
     .{ .name = "axes", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{
         P("x", .range),      P("y", .range),      P("z", .range),       P("size", .vec),
@@ -114,6 +146,7 @@ pub const ops = [_]Op{
     .{ .name = "fade", .kind = .change, .pos = &.{ P("target", .id), P("opacity", .num) }, .dur = 0.4 },
     .{ .name = "set", .kind = .change, .pos = &.{P("target", .id)}, .keys = &.{
         P("pos", .point), P("rot", .vec), P("scale", .num), P("color", .color), P("opacity", .num), P("text", .str),
+        P("focus", .range),
     }, .dur = 0.5 },
     .{ .name = "hl", .kind = .change, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .keys = &.{P("color", .color)}, .dur = 0.8, .replay = false },
     .{ .name = "spin", .kind = .change, .pos = &.{ P("target", .id), P("rate", .vec) }, .dur = 0 },
@@ -141,7 +174,7 @@ const Vec3 = [3]f64;
 
 const Point = union(enum) {
     abs: Vec3,
-    ref: struct { id: []const u8, anchor: Anchor, off: Vec3 },
+    ref: struct { id: []const u8, anchor: []const u8, off: Vec3 },
 };
 
 const Value = union(enum) {
@@ -162,6 +195,14 @@ const Value = union(enum) {
 const Entity = struct {
     op: []const u8, // static string from `ops`
     parent: ?[]const u8, // owned by the names map (key of the parent)
+    /// Pin names, comma-separated (owned; "" if none): `R1.a`, `cpu.clk`.
+    ports: []const u8 = "",
+
+    fn hasPort(e: Entity, name: []const u8) bool {
+        var it = std.mem.splitScalar(u8, e.ports, ',');
+        while (it.next()) |p| if (p.len > 0 and std.mem.eql(u8, p, name)) return true;
+        return false;
+    }
 };
 
 /// Names that currently exist. Shared by every producer feeding one scene.
@@ -175,21 +216,30 @@ pub const Scene = struct {
     }
 
     pub fn deinit(s: *Scene) void {
-        for (s.names.keys()) |k| s.gpa.free(k);
+        s.freeAll();
         s.names.deinit(s.gpa);
     }
 
     pub fn reset(s: *Scene) void {
-        for (s.names.keys()) |k| s.gpa.free(k);
+        s.freeAll();
         s.names.clearRetainingCapacity();
     }
 
-    fn add(s: *Scene, name: []const u8, op: []const u8, parent: ?[]const u8) !void {
+    fn freeAll(s: *Scene) void {
+        for (s.names.keys(), s.names.values()) |k, e| {
+            s.gpa.free(k);
+            s.gpa.free(e.ports);
+        }
+    }
+
+    fn add(s: *Scene, name: []const u8, op: []const u8, parent: ?[]const u8, ports: []const u8) !void {
         if (s.names.contains(name)) s.remove(name);
         const key = try s.gpa.dupe(u8, name);
         errdefer s.gpa.free(key);
+        const owned_ports = try s.gpa.dupe(u8, ports);
+        errdefer s.gpa.free(owned_ports);
         const parent_key: ?[]const u8 = if (parent) |p| (s.names.getKey(p) orelse null) else null;
-        try s.names.put(s.gpa, key, .{ .op = op, .parent = parent_key });
+        try s.names.put(s.gpa, key, .{ .op = op, .parent = parent_key, .ports = owned_ports });
     }
 
     /// Remove `name` and everything parented (transitively) to it.
@@ -206,8 +256,10 @@ pub const Scene = struct {
             };
             i += 1;
         }
+        const ports = s.names.get(key).?.ports;
         _ = s.names.orderedRemove(key);
         s.gpa.free(key);
+        s.gpa.free(ports);
     }
 
     fn setParent(s: *Scene, child: []const u8, parent: []const u8) void {
@@ -217,9 +269,14 @@ pub const Scene = struct {
 
     /// Parse and execute one complete line, writing IR/diagnostic JSON lines.
     pub fn command(s: *Scene, text: []const u8, line_no: u32, out: *Writer) Writer.Error!void {
+        return s.commandBody(text, null, line_no, out);
+    }
+
+    /// A command whose last string argument is a `<<TAG` … `TAG` block.
+    pub fn commandBody(s: *Scene, text: []const u8, body: ?[]const u8, line_no: u32, out: *Writer) Writer.Error!void {
         var arena_state = std.heap.ArenaAllocator.init(s.gpa);
         defer arena_state.deinit();
-        var p: LineParser = .{ .scene = s, .arena = arena_state.allocator(), .line_no = line_no, .out = out };
+        var p: LineParser = .{ .scene = s, .arena = arena_state.allocator(), .line_no = line_no, .out = out, .body = body };
         p.run(text) catch |err| switch (err) {
             error.Bad => try p.emitDiag("error", p.err_msg),
             error.OutOfMemory => try p.emitDiag("error", "out of memory"),
@@ -256,6 +313,8 @@ const LineParser = struct {
     out: *Writer,
     err_msg: []const u8 = "",
     op: *const Op = undefined,
+    /// Text of a `<<TAG` block; stands in as the last positional argument.
+    body: ?[]const u8 = null,
 
     const Error = error{ Bad, OutOfMemory, WriteFailed };
 
@@ -363,6 +422,7 @@ const LineParser = struct {
             };
             try positional.append(p.arena, t);
         }
+        if (p.body != null) try positional.append(p.arena, .{ .text = heredoc_marker, .col = 0 });
 
         // Positionals.
         const Field = struct { name: []const u8, val: Value };
@@ -371,13 +431,19 @@ const LineParser = struct {
         for (op.pos) |param| {
             if (param.many) {
                 const rest = positional.items[pi..];
-                if (rest.len < param.min) return p.fail("{s}: expected at least {d} {s} for '{s}', got {d}{s}", .{
+                if (rest.len < param.min and p.body == null) return p.fail("{s}: expected at least {d} {s} for '{s}', got {d}{s}", .{
                     op.name, param.min, tyName(param.ty), param.name, rest.len, usageHint(op),
                 });
                 if (rest.len > param.max) return p.fail("{s}: at most {d} values for '{s}', got {d}", .{ op.name, param.max, param.name, rest.len });
-                const list = try p.arena.alloc(Value, rest.len);
-                for (rest, 0..) |t, i| list[i] = try p.value(param, t.text);
-                try fields.append(p.arena, .{ .name = param.name, .val = .{ .list = list } });
+                var list: std.ArrayList(Value) = .empty;
+                for (rest) |t| {
+                    if (t.text.ptr == heredoc_marker.ptr and param.ty == .str) {
+                        var lines = std.mem.splitScalar(u8, p.body.?, '\n');
+                        while (lines.next()) |l| if (std.mem.trim(u8, l, " \t\r").len > 0)
+                            try list.append(p.arena, .{ .str = std.mem.trimEnd(u8, l, "\r") });
+                    } else try list.append(p.arena, try p.value(param, t.text));
+                }
+                try fields.append(p.arena, .{ .name = param.name, .val = .{ .list = list.items } });
                 pi = positional.items.len;
                 break;
             }
@@ -390,6 +456,8 @@ const LineParser = struct {
         }
         if (pi < positional.items.len) {
             const extra = positional.items[pi];
+            if (extra.text.ptr == heredoc_marker.ptr)
+                return p.fail("{s}: has no text argument for a <<TAG block{s}", .{ op.name, usageHint(op) });
             if (isIdent(extra.text))
                 return p.fail("{s}: unexpected argument '{s}' (optional settings are written key=value){s}", .{ op.name, extra.text, usageHint(op) });
             return p.fail("{s}: unexpected argument '{s}'{s}", .{ op.name, extra.text, usageHint(op) });
@@ -457,7 +525,64 @@ const LineParser = struct {
         } else if (std.mem.eql(u8, op.name, "del")) {
             for (fields.items[0].val.list) |v| p.scene.remove(v.id);
         } else if (id) |i| {
-            try p.scene.add(i, op.name, on);
+            var ports: []const u8 = "";
+            if (std.mem.eql(u8, op.name, "part")) {
+                const kind = fieldStr(fields.items, "kind").?;
+                for (part_pins) |pp| if (std.mem.eql(u8, pp[0], kind)) {
+                    ports = pp[1];
+                };
+            } else if (std.mem.eql(u8, op.name, "block")) {
+                var all: std.ArrayList(u8) = .empty;
+                for ([_][]const u8{ "in", "out", "top", "bottom" }) |side| {
+                    const list = fieldStr(fields.items, side) orelse continue;
+                    var it = std.mem.splitScalar(u8, list, ',');
+                    while (it.next()) |raw| {
+                        const port = std.mem.trim(u8, raw, " ");
+                        if (port.len == 0) continue;
+                        if (!isIdent(port)) return p.fail("block: port '{s}' must be a plain name (letters, digits, _)", .{port});
+                        if (std.meta.stringToEnum(Anchor, port) != null) return p.fail("block: port '{s}' clashes with the anchor of the same name; pick another", .{port});
+                        var dup = std.mem.splitScalar(u8, all.items, ',');
+                        while (dup.next()) |d| if (std.mem.eql(u8, d, port)) return p.fail("block: port '{s}' listed twice", .{port});
+                        if (all.items.len > 0) try all.append(p.arena, ',');
+                        try all.appendSlice(p.arena, port);
+                    }
+                }
+                ports = all.items;
+                try p.lintBlock(fields.items);
+            } else if (std.mem.eql(u8, op.name, "code") or std.mem.eql(u8, op.name, "table")) {
+                // Numbered rows: code lines L1…, table data rows R1… (after the header).
+                const is_code = op.name[0] == 'c';
+                var n: usize = 0;
+                if (is_code) {
+                    n = std.mem.count(u8, fieldStr(fields.items, "text").?, "\n") + 1;
+                } else {
+                    for (fields.items) |f| if (std.mem.eql(u8, f.name, "rows")) {
+                        n = f.val.list.len;
+                    };
+                    const header = for (fields.items) |f| {
+                        if (std.mem.eql(u8, f.name, "header")) break f.val.boolean;
+                    } else true;
+                    if (header and n > 0) n -= 1;
+                }
+                var all: std.ArrayList(u8) = .empty;
+                for (1..@min(n, 999) + 1) |k| {
+                    if (all.items.len > 0) try all.append(p.arena, ',');
+                    try all.print(p.arena, "{c}{d}", .{ @as(u8, if (is_code) 'L' else 'R'), k });
+                }
+                ports = all.items;
+            } else if (std.mem.eql(u8, op.name, "wave")) {
+                // Signals by name (when the name is a plain identifier): w.clk
+                var all: std.ArrayList(u8) = .empty;
+                for (fields.items) |f| if (std.mem.eql(u8, f.name, "rows")) for (f.val.list) |row| {
+                    const colon = std.mem.lastIndexOfScalar(u8, std.mem.sliceTo(row.str, '|'), ':') orelse continue;
+                    const nm = std.mem.trim(u8, row.str[0..colon], " ");
+                    if (!isIdent(nm) or std.meta.stringToEnum(Anchor, nm) != null) continue;
+                    if (all.items.len > 0) try all.append(p.arena, ',');
+                    try all.appendSlice(p.arena, nm);
+                };
+                ports = all.items;
+            }
+            try p.scene.add(i, op.name, on, ports);
             if (std.mem.eql(u8, op.name, "group"))
                 for (fields.items[0].val.list) |v| p.scene.setParent(v.id, i);
         }
@@ -483,18 +608,24 @@ const LineParser = struct {
 
     fn value(p: *LineParser, param: Param, text: []const u8) Error!Value {
         const op = p.op.name;
+        if (text.ptr == heredoc_marker.ptr) {
+            if (param.ty != .str) return p.fail("{s}: a <<END block can only fill a string argument, not '{s}'", .{ op, param.name });
+            return .{ .str = p.body.? };
+        }
         switch (param.ty) {
             .num => return .{ .num = parseNum(text) orelse
                 return p.fail("{s}: expected a number for '{s}', got '{s}'", .{ op, param.name, text }) },
             .vec => return .{ .vec = parseVec(text) orelse
                 return p.fail("{s}: expected a vector like 1,2 or 1,2,3 for '{s}', got '{s}'", .{ op, param.name, text }) },
             .range => {
+                const lines_ok = std.mem.eql(u8, param.name, "focus"); // line/row numbers: 3 or 3..5
+                if (lines_ok) if (parseNum(text)) |n| return .{ .range = .{ n, n } };
                 const dots = std.mem.indexOf(u8, text, "..") orelse
                     return p.fail("{s}: expected a range like -3..3 for '{s}', got '{s}'", .{ op, param.name, text });
                 const a = parseNum(text[0..dots]);
                 const b = parseNum(text[dots + 2 ..]);
                 if (a == null or b == null) return p.fail("{s}: expected a range like -3..3 for '{s}', got '{s}'", .{ op, param.name, text });
-                if (!(a.? < b.?)) return p.fail("{s}: range '{s}' must go from low to high", .{ op, text });
+                if (!(a.? < b.?) and !(lines_ok and a.? == b.?)) return p.fail("{s}: range '{s}' must go from low to high", .{ op, text });
                 return .{ .range = .{ a.?, b.? } };
             },
             .str => {
@@ -509,6 +640,11 @@ const LineParser = struct {
                 return p.fail("{s}: expected true/false for '{s}', got '{s}'", .{ op, param.name, text });
             },
             .word => {
+                if (param.words.len == 0) {
+                    for (text) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == '+' or c == '#' or c == '-' or c == '.'))
+                        return p.fail("{s}: '{s}' should be a plain word, got '{s}'", .{ op, param.name, text });
+                    return .{ .word = text };
+                }
                 for (param.words) |w| if (std.mem.eql(u8, w, text)) return .{ .word = w };
                 const list = try std.mem.join(p.arena, "|", param.words);
                 return p.fail("{s}: '{s}' must be one of {s}, got '{s}'", .{ op, param.name, list, text });
@@ -555,21 +691,81 @@ const LineParser = struct {
                         return p.fail("{s}: bad offset in '{s}' (write name.anchor+dx,dy)", .{ op, text });
                     rest = rest[0..plus];
                 }
-                var anchor: Anchor = .center;
+                var anchor: []const u8 = "center";
+                var name = rest;
                 if (std.mem.indexOfScalar(u8, rest, '.')) |dot| {
-                    const a = rest[dot + 1 ..];
-                    anchor = std.meta.stringToEnum(Anchor, a) orelse {
-                        const names = comptime std.meta.fieldNames(Anchor);
-                        if (suggest(a, names)) |s| return p.fail("{s}: unknown anchor '{s}' in '{s}' (did you mean '{s}'?)", .{ op, a, text, s });
-                        return p.fail("{s}: unknown anchor '{s}' in '{s}'", .{ op, a, text });
-                    };
-                    rest = rest[0..dot];
+                    anchor = rest[dot + 1 ..];
+                    name = rest[0..dot];
                 }
-                if (!isIdent(rest)) return p.fail("{s}: expected a point like 1,2 or a name for '{s}', got '{s}'", .{ op, param.name, text });
-                _ = try p.lookup(rest);
-                return .{ .point = .{ .ref = .{ .id = rest, .anchor = anchor, .off = off } } };
+                if (!isIdent(name)) return p.fail("{s}: expected a point like 1,2 or a name for '{s}', got '{s}'", .{ op, param.name, text });
+                const e = try p.lookup(name);
+                if (std.meta.stringToEnum(Anchor, anchor) == null and !e.hasPort(anchor)) {
+                    // Suggest among this entity's pins and the standard anchors.
+                    var cands: std.ArrayList([]const u8) = .empty;
+                    var it = std.mem.splitScalar(u8, e.ports, ',');
+                    while (it.next()) |pin| if (pin.len > 0) try cands.append(p.arena, pin);
+                    const pins = try std.mem.join(p.arena, ", ", cands.items);
+                    for (std.meta.fieldNames(Anchor)) |f| try cands.append(p.arena, f);
+                    const hint = if (suggest(anchor, cands.items)) |sg| try std.fmt.allocPrint(p.arena, " (did you mean '{s}'?)", .{sg}) else "";
+                    if (pins.len > 0)
+                        return p.fail("{s}: '{s}' has no pin '{s}'{s}; its pins are {s}", .{ op, name, anchor, hint, pins });
+                    return p.fail("{s}: unknown anchor '{s}' in '{s}'{s}", .{ op, anchor, text, hint });
+                }
+                return .{ .point = .{ .ref = .{ .id = name, .anchor = anchor, .off = off } } };
             },
         }
+    }
+
+    /// Warn when a block is too small for its title and port names (the
+    /// renderer can't move things the model placed, so say so up front).
+    /// Estimates: title glyphs ~0.23 wide, port names ~0.15, as the viewer draws them.
+    fn lintBlock(p: *LineParser, fields: anytype) Error!void {
+        var w: f64 = 0;
+        var h: f64 = 0;
+        for (fields) |f| if (std.mem.eql(u8, f.name, "size")) {
+            w = f.val.vec[0];
+            h = f.val.vec[1];
+        };
+        const longest = struct {
+            fn names(list: ?[]const u8) struct { len: usize, n: usize } {
+                var it = std.mem.splitScalar(u8, list orelse "", ',');
+                var m: usize = 0;
+                var n: usize = 0;
+                while (it.next()) |x| {
+                    const t = std.mem.trim(u8, x, " ");
+                    if (t.len == 0) continue;
+                    m = @max(m, t.len);
+                    n += 1;
+                }
+                return .{ .len = m, .n = n };
+            }
+        };
+        const in = longest.names(fieldStr(fields, "in"));
+        const out = longest.names(fieldStr(fields, "out"));
+        const top = longest.names(fieldStr(fields, "top"));
+        const bottom = longest.names(fieldStr(fields, "bottom"));
+        var title_len: usize = 0;
+        var title_lines: usize = 0;
+        var tl = std.mem.splitScalar(u8, fieldStr(fields, "text") orelse "", '\n');
+        while (tl.next()) |l| {
+            title_len = @max(title_len, l.len);
+            if (l.len > 0) title_lines += 1;
+        }
+        const f = struct {
+            fn of(x: usize) f64 {
+                return @floatFromInt(x);
+            }
+        }.of;
+        const sides = in.n + out.n > 0;
+        var need_w = f(title_len) * 0.23 + 0.4;
+        if (sides) need_w = @max(need_w, f(in.len + out.len) * 0.15 + 0.6);
+        need_w = @max(need_w, f(@max(top.n, bottom.n)) * 0.6);
+        var need_h = f(title_lines) * 0.5 + 0.3;
+        if (sides) need_h = @max(need_h, f(title_lines) * 0.5 + 0.2 + f(@max(in.n, out.n)) * 0.42);
+        if (top.n > 0) need_h += 0.3;
+        if (bottom.n > 0) need_h += 0.3;
+        if (w + 0.05 < need_w or h + 0.05 < need_h)
+            try p.warn("block: {d:.1}x{d:.1} is too small for its title and ports (they will overlap); try at least {d:.1}x{d:.1}", .{ w, h, @max(w, need_w), @max(h, need_h) });
     }
 
     fn lookup(p: *LineParser, name: []const u8) Error!Entity {
@@ -579,6 +775,18 @@ const LineParser = struct {
         return p.fail("{s}: unknown name '{s}'", .{ p.op.name, name });
     }
 };
+
+/// Stands in for a `<<TAG` block among the positional tokens (compared by address).
+const heredoc_marker: []const u8 = "<<heredoc>>";
+
+fn fieldStr(fields: anytype, name: []const u8) ?[]const u8 {
+    for (fields) |f| if (std.mem.eql(u8, f.name, name)) return switch (f.val) {
+        .str => |x| x,
+        .word => |x| x,
+        else => null,
+    };
+    return null;
+}
 
 fn hasKey(items: anytype, k: []const u8) bool {
     for (items) |kv| if (std.mem.eql(u8, kv.key, k)) return true;
@@ -636,6 +844,13 @@ pub const Stream = struct {
     line_no: u32 = 0,
     fence: enum { none, vcl, other } = .none,
     pending: std.ArrayList(u8) = .empty,
+    // An open `<<TAG` block: the command line, its tag, and the lines so far.
+    here_tag: std.ArrayList(u8) = .empty,
+    here_head: std.ArrayList(u8) = .empty,
+    here_body: std.ArrayList(u8) = .empty,
+    here_line: u32 = 0,
+
+    const max_block = 256 * 1024;
 
     pub fn init(mode: Mode) Stream {
         return .{ .mode = mode };
@@ -643,6 +858,15 @@ pub const Stream = struct {
 
     pub fn deinit(st: *Stream, gpa: Allocator) void {
         st.pending.deinit(gpa);
+        st.here_tag.deinit(gpa);
+        st.here_head.deinit(gpa);
+        st.here_body.deinit(gpa);
+    }
+
+    fn closeBlock(st: *Stream) void {
+        st.here_tag.clearRetainingCapacity();
+        st.here_head.clearRetainingCapacity();
+        st.here_body.clearRetainingCapacity();
     }
 
     /// Feed an arbitrary chunk of text; every completed line is executed.
@@ -661,19 +885,42 @@ pub const Stream = struct {
         try st.pending.appendSlice(scene.gpa, rest);
     }
 
-    /// Execute any final unterminated line.
+    /// Execute any final unterminated line; report a block left open.
     pub fn finish(st: *Stream, scene: *Scene, out: *Writer) (Writer.Error || Allocator.Error)!void {
-        if (st.pending.items.len == 0) return;
-        const full = try scene.gpa.dupe(u8, st.pending.items);
-        defer scene.gpa.free(full);
-        st.pending.clearRetainingCapacity();
-        try st.line(scene, full, out);
+        if (st.pending.items.len > 0) {
+            const full = try scene.gpa.dupe(u8, st.pending.items);
+            defer scene.gpa.free(full);
+            st.pending.clearRetainingCapacity();
+            try st.line(scene, full, out);
+        }
+        if (st.here_tag.items.len > 0) {
+            var buf: [160]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "<<{s} block never closed: end it with a line containing only {s}", .{ st.here_tag.items, st.here_tag.items }) catch "<< block never closed";
+            try diag(out, st.here_line, msg);
+            st.closeBlock();
+        }
     }
 
-    pub fn line(st: *Stream, scene: *Scene, raw: []const u8, out: *Writer) Writer.Error!void {
+    pub fn line(st: *Stream, scene: *Scene, raw: []const u8, out: *Writer) (Writer.Error || Allocator.Error)!void {
         st.line_no += 1;
         const text = std.mem.trimEnd(u8, raw, "\r");
-        if (st.mode == .vcl) return scene.command(text, st.line_no, out);
+
+        // Inside a <<TAG block everything is content (even ``` lines) until TAG.
+        if (st.here_tag.items.len > 0) {
+            if (std.mem.eql(u8, std.mem.trim(u8, text, " \t"), st.here_tag.items)) {
+                const body = std.mem.trimEnd(u8, st.here_body.items, "\n");
+                try scene.commandBody(st.here_head.items, body, st.here_line, out);
+                st.closeBlock();
+            } else if (st.here_body.items.len + text.len > max_block) {
+                try diag(out, st.here_line, "<< block too long (over 256 KB); it was dropped");
+                st.closeBlock();
+            } else {
+                try st.here_body.appendSlice(scene.gpa, text);
+                try st.here_body.append(scene.gpa, '\n');
+            }
+            return;
+        }
+        if (st.mode == .vcl) return st.vclLine(scene, text, out);
 
         const t = std.mem.trim(u8, text, " \t");
         if (std.mem.startsWith(u8, t, "```")) {
@@ -685,7 +932,7 @@ pub const Stream = struct {
             return;
         }
         switch (st.fence) {
-            .vcl => return scene.command(text, st.line_no, out),
+            .vcl => return st.vclLine(scene, text, out),
             .other => return,
             .none => {},
         }
@@ -714,7 +961,42 @@ pub const Stream = struct {
         const tail = std.mem.trim(u8, prose[start..], " ");
         if (tail.len > 0) try scene.say(tail, st.line_no, out);
     }
+
+    fn vclLine(st: *Stream, scene: *Scene, text: []const u8, out: *Writer) (Writer.Error || Allocator.Error)!void {
+        if (blockStart(text)) |b| {
+            try st.here_tag.appendSlice(scene.gpa, b.tag);
+            try st.here_head.appendSlice(scene.gpa, b.head);
+            st.here_line = st.line_no;
+            return;
+        }
+        return scene.command(text, st.line_no, out);
+    }
 };
+
+/// `cmd args… <<TAG` (outside any string) opens a block that ends at a line `TAG`.
+pub fn blockStart(text: []const u8) ?struct { head: []const u8, tag: []const u8 } {
+    const t = std.mem.trimEnd(u8, text, " \t");
+    const sp = std.mem.lastIndexOfAny(u8, t, " \t") orelse return null;
+    const last = t[sp + 1 ..];
+    if (!std.mem.startsWith(u8, last, "<<") or !isIdent(last[2..])) return null;
+    const head = t[0..sp];
+    var quotes: usize = 0;
+    var i: usize = 0;
+    while (i < head.len) : (i += 1) {
+        if (head[i] == '\\') {
+            i += 1;
+        } else if (head[i] == '"') quotes += 1;
+    }
+    if (quotes % 2 != 0) return null;
+    if (std.mem.indexOf(u8, head, " # ") != null) return null; // inside a comment
+    return .{ .head = head, .tag = last[2..] };
+}
+
+fn diag(out: *Writer, line_no: u32, msg: []const u8) Writer.Error!void {
+    try out.print("{{\"op\":\"diag\",\"level\":\"error\",\"line\":{d},\"msg\":", .{line_no});
+    try writeJsonString(out, msg);
+    try out.writeAll("}\n");
+}
 
 // ───────────────────────────── helpers ─────────────────────────────
 
@@ -846,7 +1128,9 @@ fn writeValue(w: *Writer, v: Value) Writer.Error!void {
             .ref => |r| {
                 try w.writeAll("{\"ref\":");
                 try writeJsonString(w, r.id);
-                try w.print(",\"anchor\":\"{s}\",\"off\":", .{@tagName(r.anchor)});
+                try w.writeAll(",\"anchor\":");
+                try writeJsonString(w, r.anchor);
+                try w.writeAll(",\"off\":");
                 try writeVec(w, r.off);
                 try w.writeAll("}");
             },
@@ -1058,4 +1342,103 @@ test "every example lesson parses without errors" {
     , .vcl);
     defer testing.allocator.free(got);
     try testing.expect(std.mem.indexOf(u8, got, "\"diag\"") == null);
+}
+
+test "pins: parts and block ports are checked, with suggestions" {
+    try expectOut(
+        \\R1: part 0,0 resistor value="10k"
+        \\U1: part 3,0 nand
+        \\wire R1.b U1.a dot=end
+        \\wire R1.c U1.y
+        \\cpu: block 0,3 3,2 "CPU" in="clk,rst" out="addr"
+        \\wire cpu.addr cpu.clk+0,-1
+        \\wire cpu.adr R1.a
+        \\b2: block 0,0 1,1 out="left"
+    ,
+        \\{"op":"part","id":"R1","line":1,"par":false,"dur":0.5,"at":[0,0,0],"kind":"resistor","value":"10k"}
+        \\{"op":"part","id":"U1","line":2,"par":false,"dur":0.5,"at":[3,0,0],"kind":"nand"}
+        \\{"op":"wire","id":"_1","line":3,"par":false,"dur":0.5,"pts":[{"ref":"R1","anchor":"b","off":[0,0,0]},{"ref":"U1","anchor":"a","off":[0,0,0]}],"dot":"end"}
+        \\{"op":"diag","level":"error","line":4,"msg":"wire: 'R1' has no pin 'c'; its pins are a, b"}
+        \\{"op":"block","id":"cpu","line":5,"par":false,"dur":0.6,"at":[0,3,0],"size":[3,2,0],"text":"CPU","in":"clk,rst","out":"addr"}
+        \\{"op":"wire","id":"_2","line":6,"par":false,"dur":0.5,"pts":[{"ref":"cpu","anchor":"addr","off":[0,0,0]},{"ref":"cpu","anchor":"clk","off":[0,-1,0]}]}
+        \\{"op":"diag","level":"error","line":7,"msg":"wire: 'cpu' has no pin 'adr' (did you mean 'addr'?); its pins are clk, rst, addr"}
+        \\{"op":"diag","level":"error","line":8,"msg":"block: port 'left' clashes with the anchor of the same name; pick another"}
+        \\
+    );
+}
+
+test "<<TAG blocks: multi-line strings, even ``` inside mixed mode" {
+    const got = try runLines(
+        \\Here is the loop.
+        \\```vcl
+        \\c: code 0,0 lang=c focus=2 <<END
+        \\for (int i = 0; i < n; i++) {
+        \\    sum += a[i];   // "quoted" \n stays
+        \\```
+        \\}
+        \\END
+        \\t: table 3,0 <<ROWS
+        \\A|B|Y
+        \\0|0|1
+        \\
+        \\1|1|0
+        \\ROWS
+        \\```
+        \\Done.
+    , .mixed);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(
+        \\{"op":"say","line":1,"par":false,"dur":1.92,"text":"Here is the loop."}
+        \\{"op":"code","id":"c","line":3,"par":false,"dur":0.6,"at":[0,0,0],"text":"for (int i = 0; i < n; i++) {\n    sum += a[i];   // \"quoted\" \\n stays\n```\n}","lang":"c","focus":[2,2]}
+        \\{"op":"table","id":"t","line":9,"par":false,"dur":0.6,"at":[3,0,0],"rows":["A|B|Y","0|0|1","1|1|0"]}
+        \\{"op":"say","line":16,"par":false,"dur":1.2,"text":"Done."}
+        \\
+    , got);
+}
+
+test "<<TAG blocks: unclosed and misplaced" {
+    try expectOut(
+        \\pt 0,0 <<X
+        \\stuff
+        \\X
+        \\code 0,0 <<END
+        \\never closed
+    ,
+        \\{"op":"diag","level":"error","line":1,"msg":"pt: has no text argument for a <<TAG block — usage: pt at:P"}
+        \\{"op":"diag","level":"error","line":4,"msg":"<<END block never closed: end it with a line containing only END"}
+        \\
+    );
+}
+
+test "row pins: code lines, table rows, wave signals" {
+    try expectOut(
+        \\c: code 0,0 "a\nb\nc"
+        \\point c.L3
+        \\point c.L4
+        \\t: table 0,0 "A|B" "0|1"
+        \\point t.R1
+        \\w: wave 0,0 "clk: p.p." "data[7:0]: =.= | A B"
+        \\point w.clk
+    ,
+        \\{"op":"code","id":"c","line":1,"par":false,"dur":0.6,"at":[0,0,0],"text":"a\nb\nc"}
+        \\{"op":"point","line":2,"par":false,"dur":0.4,"at":{"ref":"c","anchor":"L3","off":[0,0,0]}}
+        \\{"op":"diag","level":"error","line":3,"msg":"point: 'c' has no pin 'L4'; its pins are L1, L2, L3"}
+        \\{"op":"table","id":"t","line":4,"par":false,"dur":0.6,"at":[0,0,0],"rows":["A|B","0|1"]}
+        \\{"op":"point","line":5,"par":false,"dur":0.4,"at":{"ref":"t","anchor":"R1","off":[0,0,0]}}
+        \\{"op":"wave","id":"w","line":6,"par":false,"dur":1,"at":[0,0,0],"rows":["clk: p.p.","data[7:0]: =.= | A B"]}
+        \\{"op":"point","line":7,"par":false,"dur":0.4,"at":{"ref":"w","anchor":"clk","off":[0,0,0]}}
+        \\
+    );
+}
+
+test "block size lint warns before things overlap" {
+    try expectOut(
+        \\pc: block 0,0 1.3,1.2 "PC" in="next" out="addr"
+        \\ok: block 0,0 2.4,1.2 "PC" in="next" out="addr"
+    ,
+        \\{"op":"diag","level":"warning","line":1,"msg":"block: 1.3x1.2 is too small for its title and ports (they will overlap); try at least 1.8x1.2"}
+        \\{"op":"block","id":"pc","line":1,"par":false,"dur":0.6,"at":[0,0,0],"size":[1.3,1.2,0],"text":"PC","in":"next","out":"addr"}
+        \\{"op":"block","id":"ok","line":2,"par":false,"dur":0.6,"at":[0,0,0],"size":[2.4,1.2,0],"text":"PC","in":"next","out":"addr"}
+        \\
+    );
 }
