@@ -1,0 +1,8 @@
+[
+  { "file": "pythagoras.vcl", "title": "Pythagorean theorem" },
+  { "file": "derivative.vcl", "title": "The derivative" },
+  { "file": "bfs.vcl", "title": "Breadth-first search" },
+  { "file": "surface.vcl", "title": "3D: surfaces" },
+  { "file": "tour.vcl", "title": "Tour of primitives" },
+  { "file": "mixed-reply.md", "title": "Mixed prose + visuals (LLM reply)" }
+]

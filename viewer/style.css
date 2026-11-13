@@ -1,0 +1,41 @@
+:root {
+  --bg: #0b0f16; --panel: #121924ee; --line: #26324a; --fg: #e8edf3; --muted: #8796ab;
+  --accent: #7fe3ff; --ok: #66bb6a; --warn: #ffa726; --err: #ef5350;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+  font: 14px/1.4 Inter, "Segoe UI", system-ui, sans-serif; }
+canvas { display: block; }
+
+#bar { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; pointer-events: none; }
+#bar > * { pointer-events: auto; }
+.brand { font-weight: 800; letter-spacing: .08em; color: var(--accent); }
+.spacer { flex: 1; }
+#status { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
+#status::before { content: "●"; margin-right: 6px; color: var(--warn); }
+#status[data-state="live"]::before { color: var(--ok); }
+#status[data-state="offline"]::before { color: var(--muted); }
+
+button, select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--accent); }
+button.primary { background: #1d4a5a; border-color: #2c6b80; }
+.check { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+
+#panel { position: fixed; top: 54px; right: 12px; bottom: 12px; width: min(440px, calc(100vw - 24px));
+  display: none; flex-direction: column; gap: 8px; padding: 10px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(6px); }
+body.editing #panel { display: flex; }
+#panel .row { display: flex; gap: 8px; }
+#panel .row select:first-child { flex: 1; }
+#editor { flex: 1; resize: none; width: 100%; background: #0b1018; color: var(--fg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px; font: 13px/1.5 ui-monospace, "JetBrains Mono", monospace; tab-size: 2; }
+
+#log { position: fixed; left: 12px; bottom: 12px; margin: 0; padding: 0; list-style: none; max-height: 30vh;
+  width: min(520px, calc(100vw - 24px)); overflow: auto; font: 12px/1.45 ui-monospace, monospace; }
+#log li { padding: 3px 8px; margin-top: 3px; border-radius: 6px; background: var(--panel); border-left: 3px solid var(--line); }
+#log li.error { border-left-color: var(--err); }
+#log li.warning { border-left-color: var(--warn); }
+body.editing #log { right: auto; }

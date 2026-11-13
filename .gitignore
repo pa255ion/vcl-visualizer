@@ -1,0 +1,6 @@
+.zig-cache/
+zig-out/
+core/.zig-cache/
+core/zig-out/
+viewer/vcl.wasm
+result

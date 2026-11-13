@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VCL Visualizer</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header id="bar">
+    <span class="brand">VCL</span>
+    <span id="status" data-state="connecting">connecting…</span>
+    <span class="spacer"></span>
+    <label class="check"><input type="checkbox" id="voice"> voice</label>
+    <button id="toggle-editor" title="Show the editor">Editor</button>
+    <button id="enter-vr" hidden>Enter VR</button>
+    <button id="enter-ar" hidden>Enter AR</button>
+  </header>
+
+  <aside id="panel">
+    <div class="row">
+      <select id="lessons"><option value="">Lessons…</option></select>
+      <select id="mode" title="vcl: commands only · mixed: prose + ```vcl fences">
+        <option value="vcl">vcl</option>
+        <option value="mixed">mixed</option>
+      </select>
+    </div>
+    <textarea id="editor" spellcheck="false" placeholder="ax: axes 0,0 x=-4..4 y=-3..3&#10;plot ax &quot;sin(x)&quot;&#10;say &quot;Here is a sine wave.&quot;"></textarea>
+    <div class="row">
+      <button id="run" class="primary" title="Ctrl+Enter">Run</button>
+      <button id="skip" title="Finish all pending animation">Skip</button>
+      <button id="clear">Clear</button>
+    </div>
+  </aside>
+
+  <ul id="log"></ul>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
