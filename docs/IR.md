@@ -107,7 +107,8 @@ coordinates:
 | `surf` | `zgrid` | `{"n":N,"z":[…]}`: (N+1)² heights, row-major, rows along y from `y[0]`, columns along x from `x[0]` (the `x`/`y` keys, else the axes' ranges); clamped to the axes' z range |
 
 Map them through the axes like any `on=` data point. Numbers are rounded to
-about 1/20000 of the axis range.
+about 1/20000 of the axis range (on a log axis, to about 1/2000 of its low end;
+a plot on a log x axis is sampled evenly in log x).
 
 `contour` adds `contours`: `[{"z":level,"polys":[[[x,y], …], …]}, …]`, one
 entry per level from low to high; each curve is one polyline (a closed loop
@@ -171,6 +172,9 @@ replayed after `clear`, so the server's replay log starts with the last one;
 a `replay` resets the board to the default before running its commands. Entities
 with `on` are children of that axes entity and their literal points are axes
 data coordinates; on 3D axes, data (x, y, z) maps to board (x, z-up, −y).
+On 2D axes with `xlog`/`ylog` true, that axis places log10(v) instead (the
+range is positive; values ≤ 0 sit at its low end). `xticks`/`yticks` are either
+booleans or a list of numbers to tick, label and grid at.
 
 ## Notes for a Unity / VRChat client
 

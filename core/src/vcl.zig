@@ -42,6 +42,8 @@ pub const Param = struct {
     raw: bool = false,
     /// For `.id`: `name.pin` is accepted for diagrams with parts (`part_ops`).
     part: bool = false,
+    /// For `.boolean`: a quoted list of numbers is accepted too (`xticks="1,2,4"`).
+    nums: bool = false,
 };
 
 /// Ops whose pins are also parts that `hl`, `color` and `fade` can target.
@@ -142,8 +144,9 @@ pub const ops = [_]Op{
     // graphs
     .{ .name = "axes", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{
         P("x", .range),      P("y", .range),      P("z", .range),       P("size", .vec),
-        P("grid", .boolean), P("ticks", .boolean), P("xticks", .boolean), P("yticks", .boolean), P("xlabel", .str),  P("ylabel", .str),
-        P("zlabel", .str),
+        P("grid", .boolean), P("ticks", .boolean), .{ .name = "xticks", .ty = .boolean, .nums = true },
+        .{ .name = "yticks", .ty = .boolean, .nums = true }, P("xlabel", .str), P("ylabel", .str), P("zlabel", .str),
+        P("xlog", .boolean), P("ylog", .boolean),
     }, .dur = 1.0 },
     .{ .name = "plot", .kind = .draw, .pos = &.{ on_axes, .{ .name = "exprs", .ty = .str, .many = true, .max = 3 } }, .keys = &.{ P("x", .range), P("t", .range), width, dash, P("step", .boolean) }, .dur = 1.2 },
     .{ .name = "surf", .kind = .draw, .pos = &.{ on_axes, P("expr", .str) }, .keys = &.{ P("x", .range), P("y", .range), P("res", .num), fill, wire }, .dur = 1.2 },
@@ -242,7 +245,7 @@ const Entity = struct {
     }
 };
 
-const AxesRanges = struct { is3: bool, x: [2]f64, y: [2]f64, z: [2]f64 };
+const AxesRanges = struct { is3: bool, x: [2]f64, y: [2]f64, z: [2]f64, xlog: bool = false, ylog: bool = false };
 
 /// Names that currently exist. Shared by every producer feeding one scene.
 pub const Scene = struct {
@@ -565,6 +568,7 @@ const LineParser = struct {
             if (fields.items[0].val.num < 0) return p.fail("wait: seconds must be >= 0", .{});
             dur = fields.items[0].val.num;
         }
+        if (std.mem.eql(u8, op.name, "axes")) try p.checkAxes(fields.items);
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
         if (std.mem.eql(u8, op.name, "board")) {
             var b = default_board;
@@ -738,6 +742,14 @@ const LineParser = struct {
                 return .{ .str = try unescape(p.arena, text[1 .. text.len - 1], param.raw) };
             },
             .boolean => {
+                if (param.nums and text[0] == '"') {
+                    var vals: std.ArrayList(Value) = .empty;
+                    var it = std.mem.tokenizeAny(u8, text[1 .. text.len - 1], ", \t");
+                    while (it.next()) |t| try vals.append(p.arena, .{ .num = parseNum(t) orelse
+                        return p.fail("{s}: '{s}' takes true/false or a list of numbers like \"1,2,5\"; got '{s}'", .{ op, param.name, t }) });
+                    if (vals.items.len == 0) return p.fail("{s}: '{s}' is an empty list (use {s}=false for no ticks)", .{ op, param.name, param.name });
+                    return .{ .list = vals.items };
+                }
                 const t = [_][]const u8{ "true", "on", "yes", "1" };
                 const f = [_][]const u8{ "false", "off", "no", "0" };
                 for (t) |w| if (std.ascii.eqlIgnoreCase(text, w)) return .{ .boolean = true };
@@ -842,6 +854,24 @@ const LineParser = struct {
     /// Warn when a block is too small for its title and port names (the
     /// renderer can't move things the model placed, so say so up front).
     /// Estimates: title glyphs ~0.23 wide, port names ~0.15, as the viewer draws them.
+    /// Log axes need a positive 2D range; explicit ticks should fall inside it.
+    fn checkAxes(p: *LineParser, fields: anytype) Error!void {
+        const A = axesRanges(fields);
+        inline for (.{ "x", "y" }) |ax| {
+            const log = @field(A, ax ++ "log");
+            const r = @field(A, ax);
+            if (log and A.is3) return p.fail("axes: " ++ ax ++ "log works on 2D axes only", .{});
+            if (log and !(r[0] > 0)) return p.fail("axes: " ++ ax ++ "log=true needs a positive " ++ ax ++ " range, like " ++ ax ++ "=0.1..100; got {d}..{d}", .{ r[0], r[1] });
+            if (fieldVal(fields, ax ++ "ticks")) |v| if (v == .list) {
+                var out: usize = 0;
+                for (v.list) |t| if (t.num < r[0] or t.num > r[1]) {
+                    out += 1;
+                };
+                if (out > 0) try p.warn("axes: {d} of the " ++ ax ++ "ticks fall outside " ++ ax ++ "={d}..{d} and won't show", .{ out, r[0], r[1] });
+            };
+        }
+    }
+
     /// Evaluate a `plot`/`surf` and return its sample fields as a JSON fragment
     /// (",\"polys\":…" or ",\"zgrid\":…"), in the axes' data coordinates.
     /// Mirrors what viewer/js/runtime.js used to sample client-side.
@@ -860,8 +890,9 @@ const LineParser = struct {
                 return @intFromFloat(std.math.clamp(@ceil(-@log10(q)), 0, 8));
             }
         };
-        const dx = decimals.of(A.x);
-        const dy = decimals.of(A.y);
+        // On a log axis precision follows the low end (0.001 needs more digits than 1000).
+        const dx = if (A.xlog) decimals.of(.{ 0, A.x[0] * 10 }) else decimals.of(A.x);
+        const dy = if (A.ylog) decimals.of(.{ 0, A.y[0] * 10 }) else decimals.of(A.y);
         const dz = decimals.of(if (A.is3) A.z else A.y);
 
         if (std.mem.eql(u8, op, "surf")) {
@@ -887,6 +918,7 @@ const LineParser = struct {
 
         if (std.mem.eql(u8, op, "contour")) {
             if (A.is3) return p.fail("contour: needs 2D axes (for a height field on 3D axes use surf)", .{});
+            if (A.xlog or A.ylog) return p.fail("contour: log axes aren't supported; plot log(z) on linear axes instead", .{});
             const src = fieldVal(fields, "expr").?.str;
             const f = expr.compile(&ep, src, "xy") catch |e| return p.exprFail(e, src, &ep);
             const xr = if (fieldVal(fields, "x")) |v| v.range else A.x;
@@ -975,15 +1007,26 @@ const LineParser = struct {
         };
         if (srcs.len == 1) {
             const xr = if (fieldVal(fields, "x")) |v| v.range else A.x;
-            const yspan = A.y[1] - A.y[0];
+            // Work in screen units: log10 on a log axis (so sampling is even across decades).
+            const toS = struct {
+                fn f(y: f64, log: bool) f64 {
+                    return if (!log) y else if (y > 0) @log10(y) else std.math.nan(f64);
+                }
+            }.f;
+            const ylo = toS(A.y[0], A.ylog);
+            const yhi = toS(A.y[1], A.ylog);
+            const yspan = yhi - ylo;
+            if (A.xlog and !(xr[0] > 0)) return p.fail("plot: x={d}..{d} must be positive on a log x axis", .{ xr[0], xr[1] });
             const N = 600;
             const stairs = if (fieldVal(fields, "step")) |v| v.boolean else false;
             var prev: ?f64 = null;
             var prev_x: f64 = xr[0];
             for (0..N + 1) |i| {
-                const x = xr[0] + (xr[1] - xr[0]) * @as(f64, @floatFromInt(i)) / N;
+                const u = @as(f64, @floatFromInt(i)) / N;
+                const x = if (A.xlog) xr[0] * std.math.pow(f64, xr[1] / xr[0], u) else xr[0] + (xr[1] - xr[0]) * u;
                 const y = fns[0].eval(.{ .x = x, .t = x });
-                const in = std.math.isFinite(y) and (A.is3 or (y >= A.y[0] - 0.05 * yspan and y <= A.y[1] + 0.05 * yspan));
+                const yv = toS(y, A.ylog);
+                const in = std.math.isFinite(yv) and (A.is3 or (yv >= ylo - 0.05 * yspan and yv <= yhi + 0.05 * yspan));
                 if (stairs and in and prev != null and y != prev.?) {
                     // A staircase: find where the value jumps (bisection), then run flat to it and rise.
                     var a = prev_x;
@@ -1000,7 +1043,7 @@ const LineParser = struct {
                         prev = y;
                         continue;
                     }
-                } else if (!in or (prev != null and !A.is3 and @abs(y - prev.?) > yspan))
+                } else if (!in or (prev != null and !A.is3 and @abs(yv - toS(prev.?, A.ylog)) > yspan))
                     step.brk(w, &polys, &cur, &pending) catch return error.OutOfMemory;
                 prev_x = x;
                 if (stairs and in and prev != null and y == prev.? and i != N) continue; // flat: only the corners matter
@@ -1771,6 +1814,8 @@ fn axesRanges(fields: anytype) AxesRanges {
         .x = if (fieldVal(fields, "x")) |v| v.range else .{ -5, 5 },
         .y = if (fieldVal(fields, "y")) |v| v.range else if (is3) .{ -5, 5 } else .{ -3, 3 },
         .z = if (z) |v| v.range else .{ 0, 0 },
+        .xlog = if (fieldVal(fields, "xlog")) |v| v.boolean else false,
+        .ylog = if (fieldVal(fields, "ylog")) |v| v.boolean else false,
     };
 }
 
@@ -2804,6 +2849,35 @@ test "charts and diagrams: data strings become arrays, pins and parts" {
         \\{"op":"diag","level":"error","line":12,"msg":"hl: unknown name 'b'"}
         \\
     );
+}
+
+test "log axes and listed ticks" {
+    var scene = Scene.init(testing.allocator);
+    defer scene.deinit();
+    var st = Stream.init(.vcl);
+    defer st.deinit(testing.allocator);
+    var aw: Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try st.feed(&scene,
+        \\ax: axes 0,0 x=0.01..100 y=0.1..10 xlog=true ylog=true xticks="0.5,1,2,1000"
+        \\plot ax "sqrt(x)"
+        \\b: axes 0,0 x=0..1 ylog=true
+        \\contour ax "x*y"
+        \\c: axes 0,0 yticks="1,a"
+        \\
+    , &aw.writer);
+    const out = aw.written();
+    try testing.expect(std.mem.indexOf(u8, out, "\"xlog\":true,\"ylog\":true,\"xticks\":[0.5,1,2,1000]") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "1 of the xticks fall outside x=0.01..100") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "ylog=true needs a positive y range") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "contour: log axes aren't supported") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "'yticks' takes true/false or a list of numbers") != null);
+    // Sampled evenly in log x: the first steps are tiny (0.01 → 0.010155), and y is kept to 0.1..10.
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    const plot = while (lines.next()) |l| {
+        if (std.mem.startsWith(u8, l, "{\"op\":\"plot\"")) break l;
+    } else return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, plot, "\"polys\":[[[0.01,0.1,0],[0.010155,0.10077,0]") != null);
 }
 
 test "contour and step plots are sampled" {

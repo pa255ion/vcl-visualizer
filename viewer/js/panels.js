@@ -14,6 +14,7 @@ const KW = {
   verilog: 'module endmodule input output inout wire reg logic always always_ff always_comb always_latch assign begin end if else case casez endcase posedge negedge parameter localparam integer initial for generate endgenerate genvar function endfunction task endtask default typedef enum struct packed',
   vhdl: 'entity architecture is begin end port in out inout signal process if then else elsif case when others library use all component generic map variable constant type of to downto rising_edge falling_edge and or not xor',
   asm: '',
+  haskell: 'module where import qualified as hiding data type newtype class instance deriving via stock anyclass let in case of if then else do mdo rec forall family default infix infixl infixr foreign',
   sh: 'if then else elif fi for do done while until case esac function return export local in echo exit',
 };
 const TYPES = {
@@ -22,7 +23,7 @@ const TYPES = {
   vhdl: 'std_logic std_logic_vector unsigned signed integer natural boolean',
   go: 'int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 float32 float64 string bool byte rune error',
 };
-const ALIASES = { 'c++': 'cpp', h: 'c', hpp: 'cpp', py: 'python', javascript: 'js', typescript: 'ts', rs: 'rust', sv: 'verilog', systemverilog: 'verilog', v: 'verilog', vhd: 'vhdl', s: 'asm', assembly: 'asm', bash: 'sh', shell: 'sh' };
+const ALIASES = { 'c++': 'cpp', h: 'c', hpp: 'cpp', py: 'python', javascript: 'js', typescript: 'ts', rs: 'rust', sv: 'verilog', systemverilog: 'verilog', v: 'verilog', vhd: 'vhdl', s: 'asm', assembly: 'asm', bash: 'sh', shell: 'sh', hs: 'haskell', clash: 'haskell', lhs: 'haskell' };
 
 function langOf(name) {
   const l = String(name || '').toLowerCase();
@@ -33,8 +34,8 @@ function spec(lang) {
   const l = langOf(lang);
   const words = new Set([...(KW[l] ?? '').split(' '), ...(l === 'cpp' ? KW.c.split(' ') : []), ...(l === 'ts' ? KW.js.split(' ') : [])].filter(Boolean));
   const types = new Set((TYPES[l] ?? '').split(' ').filter(Boolean));
-  const line = l === 'python' || l === 'sh' ? ['#'] : l === 'vhdl' ? ['--'] : l === 'asm' ? [';', '#', '//'] : ['//'];
-  const block = ['python', 'sh', 'vhdl', 'asm'].includes(l) ? null : ['/*', '*/'];
+  const line = l === 'python' || l === 'sh' ? ['#'] : l === 'vhdl' || l === 'haskell' ? ['--'] : l === 'asm' ? [';', '#', '//'] : ['//'];
+  const block = ['python', 'sh', 'vhdl', 'asm'].includes(l) ? null : l === 'haskell' ? ['{-', '-}'] : ['/*', '*/'];
   return { l, words, types, line, block, ci: l === 'vhdl' };
 }
 
@@ -63,7 +64,8 @@ export function highlight(src, lang) {
         push(rest.slice(0, end + 2), 'com'); i += end + 2; inBlock = false; continue;
       }
       if (s.block && rest.startsWith(s.block[0])) { inBlock = true; continue; }
-      if (s.line.some((c) => rest.startsWith(c))) { push(rest, 'com'); break; }
+      // Haskell: `--` starts a comment unless it is part of an operator (-->, --|).
+      if (s.l === 'haskell' ? /^--+(?![!#$%&*+./<=>?@\\^|~:])/.test(rest) : s.line.some((c) => rest.startsWith(c))) { push(rest, 'com'); break; }
       const q = rest[0];
       if (q === '"' || q === "'" || (q === '`' && (s.l === 'js' || s.l === 'ts' || s.l === 'go'))) {
         // Verilog sized literals (8'hFF) are numbers, not strings.
@@ -71,7 +73,7 @@ export function highlight(src, lang) {
           const m = /^'[sS]?[bodhBODH][0-9a-fA-FxXzZ_?]+/.exec(rest);
           push(m[0], 'num'); i += m[0].length; continue;
         }
-        if (q === "'" && (s.l === 'rust' || s.l === 'vhdl') && !/^'(\\.|[^'\\])'/.test(rest)) { push(q, 'plain'); i++; continue; }
+        if (q === "'" && (s.l === 'rust' || s.l === 'vhdl' || s.l === 'haskell') && !/^'(\\.|[^'\\])'/.test(rest)) { push(q, 'plain'); i++; continue; }
         let j = 1;
         while (j < rest.length && rest[j] !== q) j += rest[j] === '\\' ? 2 : 1;
         push(rest.slice(0, j + 1), 'str'); i += j + 1; continue;
@@ -80,11 +82,13 @@ export function highlight(src, lang) {
       if ((m = /^(0[xX][0-9a-fA-F_]+|0[bB][01_]+|\d[\d_]*(\.\d+)?([eE][+-]?\d+)?[uUlLfF]*)/.exec(rest)) && !/\w/.test(raw[i - 1] ?? '')) {
         push(m[0], 'num'); i += m[0].length; firstWord = false; continue;
       }
-      if ((m = /^[A-Za-z_$@][\w$]*/.exec(rest))) {
+      if ((m = (s.l === 'haskell' ? /^[A-Za-z_][\w']*/ : /^[A-Za-z_$@][\w$]*/).exec(rest))) {
         const w = m[0], key = s.ci ? w.toLowerCase() : w;
         let type = 'plain';
         if (s.words.has(key)) type = 'kw';
         else if (s.types.has(key)) type = 'type';
+        else if (s.l === 'haskell' && /^[A-Z]/.test(w)) type = 'type'; // types and constructors
+        else if (s.l === 'haskell' && /^\s*::/.test(raw.slice(i + w.length)) && !raw.slice(0, i).trim()) type = 'fn'; // a signature
         else if (s.l === 'asm' && firstWord) type = 'kw';
         else if (s.l === 'asm' && /^(%?[re]?[a-d]x|%?r\d+[dwb]?|x\d+|w\d+|[re]?[sd]i|[re]?[sb]p|sp|lr|pc|zero|ra|[atsv]\d+)$/i.test(w)) type = 'type';
         else if (raw[i + w.length] === '(') type = 'fn';

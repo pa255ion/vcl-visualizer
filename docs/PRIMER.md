@@ -28,6 +28,7 @@ plot AX "f(x)" dash=true | plot AX "x(t)" "y(t)" ["z(t)"] t=lo..hi        surf A
 contour AX "f(x,y)" levels=N   bars AX "y y y" | "x,y x,y" | "x,y1/y2/y3" labels="a,b,c" series="p,q,r" width=N
 hist AX "values…" bins=N   scatter AX "x,y x,y …"   errbar AX "x,lo..hi x,y,lo..hi" horiz=true   band AX y=lo..hi | x=lo..hi
 plot AX "round(4x)/4" step=true (staircase)   axes … xticks=false | yticks=false (numbers off on one axis: bar labels, forest-plot rows)
+axes … x=0.5..4 xlog=true xticks="0.5,0.8,1,1.25,2,4"   (log axis, positive range; ticks at given values; ylog too; 2D)
 box P w,h,d   sphere P r   cyl P P r   img P "url" size=N   svg P "url"|<<END size=N   model P "x.glb|x.stl|x.obj" size=N
 move a P   rot a x,y,z(deg)   scale a N   color a C   fade a N   set a text="S" color=C pos=P
 hl a b color=C (pulse)   spin a x,y,z (deg/s; 0,0,0 stops)   g: group a b c
@@ -54,7 +55,7 @@ part P KIND rot=0|90|180|270 flip=true label="R1" value="10k"
 wire P P… dot=start|end|both bus=32 arrow=true route=auto|hv|vh|direct   right-angle wires; add corner points to steer
 name: block P w,h "Title" in="clk,rst" out="q" top=… bottom=…  flip=true (in right, out left)   ports become pins: name.clk
 frame a b c title="Core"          dashed box around entities (nest frames for hierarchy)
-code P lang=c|zig|verilog|python|… title="f.c" focus=2..4 <<END … END      lines are pins: c.L3
+code P lang=c|zig|verilog|haskell|python|… title="f.c" focus=2..4 <<END … END      lines are pins: c.L3
 table P "A|B|Y" "0|0|0" … focus=2                                   data rows are pins: t.R2
 wave P "clk: p..." "en: 0.1..0" "d[7:0]: x=.=. | A5 3C" step=0.5    0 1 z x . = p n; pins: w.clk w.en w.d ("FIFO write" → w.FIFO_write)
 set c focus=5       move the highlighted lines/rows        arrow note.left c.L5   point at a line

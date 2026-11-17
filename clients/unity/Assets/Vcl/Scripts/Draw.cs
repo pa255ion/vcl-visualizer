@@ -204,6 +204,32 @@ namespace Vcl
         }
 
         /// <summary>"Nice" tick step for a range (1, 2, 5 × 10^k).</summary>
+        /// <summary>Log-axis ticks over r (r[0] &gt; 0), as viewer/js/draw.js logTicks.</summary>
+        public static List<double> LogTicks(double[] r)
+        {
+            int k0 = (int)System.Math.Floor(System.Math.Log10(r[0]) + 1e-9), k1 = (int)System.Math.Ceiling(System.Math.Log10(r[1]) - 1e-9);
+            double decades = System.Math.Log10(r[1] / r[0]);
+            int[] mults = decades >= 3 ? new[] { 1 } : decades >= 1 ? new[] { 1, 2, 5 } : new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+            int step = System.Math.Max(1, (int)System.Math.Ceiling(decades / 7));
+            var outv = new List<double>();
+            for (int k = k0; k <= k1; k++)
+            {
+                if (mults.Length == 1 && (k - k0) % step != 0) continue;
+                foreach (int m in mults)
+                {
+                    double v = double.Parse((m * System.Math.Pow(10, k)).ToString("G12", System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture);
+                    if (v >= r[0] * (1 - 1e-9) && v <= r[1] * (1 + 1e-9)) outv.Add(v);
+                }
+            }
+            if (outv.Count < 2)
+            {
+                outv.Clear();
+                double st = NiceStep(r[1] - r[0], 4);
+                for (double v = System.Math.Ceiling(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) outv.Add(v);
+            }
+            return outv;
+        }
+
         public static double NiceStep(double span, double target = 6)
         {
             double raw = span / target;
@@ -214,6 +240,17 @@ namespace Vcl
 
         public static string FmtTick(double v)
         {
+            // Very large or small magnitudes (log axes) as powers of ten: 10⁻⁵, 3×10⁶.
+            if (v != 0 && (System.Math.Abs(v) >= 1e5 || System.Math.Abs(v) < 1e-3))
+            {
+                int k = (int)System.Math.Floor(System.Math.Log10(System.Math.Abs(v)) + 1e-9);
+                double m = System.Math.Round(v / System.Math.Pow(10, k) * 100) / 100;
+                var sup = new System.Text.StringBuilder();
+                foreach (char ch in k.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                    sup.Append("⁻⁰¹²³⁴⁵⁶⁷⁸⁹"["-0123456789".IndexOf(ch)]);
+                string mant = m == 1 ? "" : m == -1 ? "-" : m.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "×";
+                return mant + "10" + sup;
+            }
             double r = System.Math.Round(v * 1000) / 1000;
             if (r == 0) return "0";
             return r.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);

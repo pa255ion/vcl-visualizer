@@ -61,6 +61,16 @@ test('highlight: keywords, strings, comments, numbers per language', () => {
   assert.equal(b[1].at(-1).text.trim(), 'b');
 });
 
+test('highlight: haskell (Clash) comments, primes, types, operators', () => {
+  const kinds = (src) => highlight(src, 'hs')[0].filter((t) => t.text.trim()).map((t) => `${t.type}:${t.text.trim()}`);
+  assert.deepEqual(kinds("mac :: Signal dom (Signed 16) -- acc"), ['fn:mac', 'plain:::', 'type:Signal', 'plain:dom (', 'type:Signed', 'num:16', 'plain:)', 'com:-- acc']);
+  assert.deepEqual(kinds("f x' = x' --> y"), ["plain:f x' = x' --> y"]); // a prime isn't a char literal; --> isn't a comment
+  assert.ok(kinds("c == 'a'").includes("str:'a'"));
+  const b = highlight('{-# LANGUAGE DataKinds #-}\n{- a\nb -} where', 'haskell');
+  assert.equal(b[0][0].type, 'com');
+  assert.equal(b[2].at(-1).type, 'kw');
+});
+
 test('parseWave: levels, repeats, bus values with labels, clocks', () => {
   const [clk, bus] = parseWave(['clk: p..', 'd[7:0]: x=.=| A5 3C']);
   assert.equal(clk.name, 'clk');

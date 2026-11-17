@@ -454,13 +454,17 @@ namespace Vcl
             var zr = c.Range("z") ?? new double[] { 0, 0 };
             var size = c.Has("size") ? Raw(c["size"]) : (is3 ? new Vector3(5, 5, 5) : new Vector3(8, 5, 0));
             float W = size.x, Hh = size.y, Dd = size.z != 0 ? size.z : size.x;
-            float sx = W / (float)(xr[1] - xr[0]), sy = Hh / (float)(yr[1] - yr[0]), sz = is3 ? Dd / (float)(zr[1] - zr[0]) : 1;
-            float mx = (float)(xr[0] + xr[1]) / 2, my = (float)(yr[0] + yr[1]) / 2, mz = (float)(zr[0] + zr[1]) / 2;
+            // Log axes (2D only) place log10(v); values <= 0 sit at the low end.
+            bool xlog = !is3 && c.Bool("xlog"), ylog = !is3 && c.Bool("ylog");
+            Func<double, double> Tf(bool log, double[] r) => log ? (v => Math.Log10(v > 0 ? v : r[0])) : (Func<double, double>)(v => v);
+            var tx = Tf(xlog, xr); var ty = Tf(ylog, yr);
+            float sx = W / (float)(tx(xr[1]) - tx(xr[0])), sy = Hh / (float)(ty(yr[1]) - ty(yr[0])), sz = is3 ? Dd / (float)(zr[1] - zr[0]) : 1;
+            float mx = (float)(tx(xr[0]) + tx(xr[1])) / 2, my = (float)(ty(yr[0]) + ty(yr[1])) / 2, mz = (float)(zr[0] + zr[1]) / 2;
             float smin = Mathf.Min(sx, sy);
             // Data (x, y, z) → axes-local. 3D: data z is up, data y goes into the board.
             Func<Vector3, Vector3> map = is3
                 ? (Func<Vector3, Vector3>)(v => new Vector3((v.x - mx) * sx, (v.z - mz) * sz, (v.y - my) * sy))
-                : v => new Vector3((v.x - mx) * sx, (v.y - my) * sy, -v.z * smin);
+                : v => new Vector3(((float)tx(v.x) - mx) * sx, ((float)ty(v.y) - my) * sy, -v.z * smin);
             e.Obj.localPosition = e.ToParent(c["at"]); // before AxesSelf is set: `at` is in board space
             e.AxesSelf = new AxesInfo { Is3 = is3, X = xr, Y = yr, Z = zr, Map = map };
             if (is3) { e.Euler = new Vector3(0.35f, -0.55f, 0); e.Obj.localRotation = ThreeEuler(e.Euler); }
@@ -505,28 +509,38 @@ namespace Vcl
                 if (is3) e.Billboards.Add(tp.transform);
             }
             bool showTicks = c.Bool("ticks", true), showGrid = c.Bool("grid", true);
-            void Each(double[] r, Action<double> f)
+            // xticks/yticks: true/false, or a list of values to tick (and grid) at.
+            var xlist = c.List("xticks"); var ylist = c.List("yticks");
+            bool showX = xlist != null || c.Bool("xticks", showTicks), showY = ylist != null || c.Bool("yticks", showTicks);
+            // Given values are always labelled; generated ones skip the corner where the axes cross.
+            void Each(double[] r, Action<double, bool> f, bool log = false, List<object> list = null)
             {
+                if (list != null)
+                {
+                    foreach (var o in list) { double v = Convert.ToDouble(o); if (v >= r[0] - 1e-9 && v <= r[1] + 1e-9) f(v, false); }
+                    return;
+                }
+                if (log) { foreach (var v in Draw.LogTicks(r)) f(v, false); return; }
                 double st = Draw.NiceStep(r[1] - r[0]);
-                for (double v = Math.Ceiling(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) f(v);
+                for (double v = Math.Ceiling(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) f(v, true);
             }
-            Each(xr, v =>
+            Each(xr, (v, gen) =>
             {
                 if (showGrid) grid.Add(new List<Vector3> { P(v, yr[0]), P(v, yr[1]) });
-                if (!showTicks || Math.Abs(v - ox) < 1e-9) return;
+                if (!showX || (gen && Math.Abs(v - ox) < 1e-9)) return;
                 var p = P(v, oy);
                 ticks.Add(new List<Vector3> { p + new Vector3(0, -tl, 0), p + new Vector3(0, tl, 0) });
                 Label(Draw.FmtTick(v), p + new Vector3(0, -0.32f, 0));
-            });
-            Each(yr, v =>
+            }, xlog, xlist);
+            Each(yr, (v, gen) =>
             {
                 if (showGrid) grid.Add(new List<Vector3> { P(xr[0], v), P(xr[1], v) });
-                if (!showTicks || Math.Abs(v - oy) < 1e-9) return;
+                if (!showY || (gen && Math.Abs(v - oy) < 1e-9)) return;
                 var p = P(ox, v);
                 ticks.Add(new List<Vector3> { p + new Vector3(-tl, 0, 0), p + new Vector3(tl, 0, 0) });
                 Label(Draw.FmtTick(v), p + new Vector3(-0.2f, 0, 0), "right");
-            });
-            if (is3) Each(zr, v =>
+            }, ylog, ylist);
+            if (is3) Each(zr, (v, _) =>
             {
                 if (!showTicks || Math.Abs(v - oz) < 1e-9) return;
                 var p = P(ox, oy, v);

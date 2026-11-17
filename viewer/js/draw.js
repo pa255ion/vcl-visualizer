@@ -179,6 +179,39 @@ export function niceStep(span, target = 6) {
 }
 
 export function fmtTick(v) {
+  // Very large or small magnitudes (log axes) as powers of ten: 10⁻⁵, 3×10⁶.
+  if (v !== 0 && (Math.abs(v) >= 1e5 || Math.abs(v) < 1e-3)) {
+    const k = Math.floor(Math.log10(Math.abs(v)) + 1e-9);
+    const m = Math.round((v / 10 ** k) * 100) / 100;
+    const sup = String(k).replace(/[-0-9]/g, (d) => '⁻⁰¹²³⁴⁵⁶⁷⁸⁹'['-0123456789'.indexOf(d)]);
+    return (m === 1 ? '' : m === -1 ? '-' : `${m}×`) + `10${sup}`;
+  }
   const r = Math.round(v * 1000) / 1000;
   return Object.is(r, -0) ? '0' : String(r);
+}
+
+/**
+ * Tick values for a log axis over r (r[0] > 0): powers of ten when the range
+ * spans several decades (thinned to about 7), else 1-2-5 or 1…9 multiples.
+ */
+export function logTicks(r) {
+  const k0 = Math.floor(Math.log10(r[0]) + 1e-9), k1 = Math.ceil(Math.log10(r[1]) - 1e-9);
+  const decades = Math.log10(r[1] / r[0]);
+  const mults = decades >= 3 ? [1] : decades >= 1 ? [1, 2, 5] : [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const step = Math.max(1, Math.ceil(decades / 7));
+  const out = [];
+  for (let k = k0; k <= k1; k++) {
+    if (mults.length === 1 && (k - k0) % step) continue;
+    for (const m of mults) {
+      const v = Number((m * 10 ** k).toPrecision(12));
+      if (v >= r[0] * (1 - 1e-9) && v <= r[1] * (1 + 1e-9)) out.push(v);
+    }
+  }
+  // Too narrow for any 1…9 multiple to land twice: fall back to linear steps.
+  if (out.length < 2) {
+    const st = niceStep(r[1] - r[0], 4);
+    out.length = 0;
+    for (let v = Math.ceil(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) out.push(Number(v.toPrecision(12)));
+  }
+  return out;
 }

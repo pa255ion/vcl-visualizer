@@ -177,7 +177,7 @@ Every drawing op accepts: `color=C` `opacity=N` `fx=draw|fade|grow|pop|none`
 
 | Op | Arguments | Keys |
 |---|---|---|
-| `axes` | `P` | centre; `x=R` `y=R` `z=R` (z makes them 3D) `size=V` (extent in board units) `grid=bool` `ticks=bool` `xticks=bool` `yticks=bool` `xlabel=S` `ylabel=S` `zlabel=S` |
+| `axes` | `P` | centre; `x=R` `y=R` `z=R` (z makes them 3D) `size=V` (extent in board units) `grid=bool` `ticks=bool` `xticks=bool|"v,v,…"` `yticks=bool|"v,v,…"` `xlog=bool` `ylog=bool` `xlabel=S` `ylabel=S` `zlabel=S` |
 | `plot` | `ID S [S [S]]` | on axes ID: one string `y=f(x)`; two strings `x(t), y(t)`; three strings `x(t), y(t), z(t)`. `x=R` or `t=R` domain; `width=N` `dash=bool` (e.g. a fit or estimate next to data) `step=bool` (a staircase) |
 | `surf` | `ID S` | surface `z=f(x,y)` on 3D axes; `x=R` `y=R` `res=N` `fill=C` `wire=bool` |
 
@@ -190,7 +190,16 @@ Every drawing op accepts: `color=C` `opacity=N` `fx=draw|fade|grow|pop|none`
 
 `plot … step=true` draws a staircase: flat runs and vertical risers at the
 jumps, located exactly (`plot ax "round(4x)/4" step=true` for a quantiser).
-`axes … xticks=false` (or `yticks=false`) hides the numbers along one axis only.
+`axes … xticks=false` (or `yticks=false`) hides the numbers along one axis only;
+`xticks="0.75,1,1.25,2"` ticks, labels and grids exactly those values instead.
+`axes … xlog=true` (and/or `ylog=true`, 2D axes only) makes an axis
+logarithmic: the range must be positive (`x=0.5..4`, `y=0.001..1000`), ticks
+fall on powers of ten (or 1-2-5 / 1…9 multiples over a short range, tiny and
+huge ones written 10⁻⁵), and everything on the axes (plots, points, bars,
+intervals, bands) is placed by log10 of its value. Plots are sampled evenly in
+log x. Ratio CIs and equivalence margins: `axes … x=0.5..4 xlog=true
+xticks="0.5,0.8,1,1.25,2,4"` with `errbar … horiz=true` and `band … x=0.8..1.25`.
+Bars start from the low end of a log y range. `contour` doesn't support log axes.
 
 Data strings may be given as a `<<END` block instead (one or more items per
 line). The parser checks them: wrong counts and bad numbers are errors.
@@ -223,7 +232,7 @@ log log2 floor ceil round min max pow sign mod`.
 
 | Op | Arguments | Keys |
 |---|---|---|
-| `code` | `P S` | syntax-highlighted source (`<<END` block); `lang=` (c cpp zig rust python js ts java go verilog vhdl asm sh…) `title=S` `lines=bool` `focus=R` (highlight lines, dim the rest; `set c focus=` moves it) `size=N` (line height, default 0.48). Pins `L1…` |
+| `code` | `P S` | syntax-highlighted source (`<<END` block); `lang=` (c cpp zig rust python js ts java go verilog vhdl haskell (hs, clash) asm sh…) `title=S` `lines=bool` `focus=R` (highlight lines, dim the rest; `set c focus=` moves it) `size=N` (line height, default 0.48). Pins `L1…` |
 | `table` | `P S…` | one string per row, cells split by `\|`; `header=bool` (default true) `focus=R` (data rows) `size=N` (row height, default 0.65). Pins `R1…` |
 | `wave` | `P S…` | timing diagram, one row per signal: `"name: pattern [\| labels]"` with `0 1` levels, `z` high-Z, `x` unknown, `.` repeat, `=` (or `2`–`9`) a bus value named by the next label, `p`/`n` one clock period. `step=N` `size=N`. Pins: signal names (see §1). |
 | `svg` | `P S` | URL or inline markup (`<<END`), rasterized sharply; `size=N` (width) |

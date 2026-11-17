@@ -868,13 +868,17 @@ BUILD.axes = function (e, c) {
   const xr = c.x ?? [-5, 5], yr = c.y ?? (is3 ? [-5, 5] : [-3, 3]), zr = c.z ?? [0, 0];
   const size = c.size ?? (is3 ? [5, 5, 5] : [8, 5, 0]);
   const W = size[0], Hh = size[1], Dd = size[2] || size[0];
-  const sx = W / (xr[1] - xr[0]), sy = Hh / (yr[1] - yr[0]), sz = is3 ? Dd / (zr[1] - zr[0]) : 1;
-  const mx = (xr[0] + xr[1]) / 2, my = (yr[0] + yr[1]) / 2, mz = (zr[0] + zr[1]) / 2;
+  // Log axes (2D only) place log10(v); values <= 0 sit at the low end.
+  const xlog = !is3 && !!c.xlog, ylog = !is3 && !!c.ylog;
+  const tf = (log, r) => (log ? (v) => Math.log10(v > 0 ? v : r[0]) : (v) => v);
+  const tx = tf(xlog, xr), ty = tf(ylog, yr);
+  const sx = W / (tx(xr[1]) - tx(xr[0])), sy = Hh / (ty(yr[1]) - ty(yr[0])), sz = is3 ? Dd / (zr[1] - zr[0]) : 1;
+  const mx = (tx(xr[0]) + tx(xr[1])) / 2, my = (ty(yr[0]) + ty(yr[1])) / 2, mz = (zr[0] + zr[1]) / 2;
   const map = is3
     ? (v) => new THREE.Vector3((v.x - mx) * sx, (v.z - mz) * sz, -(v.y - my) * sy)
-    : (v) => new THREE.Vector3((v.x - mx) * sx, (v.y - my) * sy, v.z * Math.min(sx, sy));
+    : (v) => new THREE.Vector3((tx(v.x) - mx) * sx, (ty(v.y) - my) * sy, v.z * Math.min(sx, sy));
   e.obj.position.copy(e.toParent(c.at)); // before e.axes is set: `at` is in board space
-  e.axes = { is3, x: xr, y: yr, z: zr, map, plots: 0 };
+  e.axes = { is3, x: xr, y: yr, z: zr, xlog, ylog, map, plots: 0 };
   if (is3) e.obj.rotation.set(0.35, -0.55, 0);
 
   const clamp = (v, r) => Math.min(Math.max(v, r[0]), r[1]);
@@ -915,27 +919,30 @@ BUILD.axes = function (e, c) {
     if (is3) e.billboards.push(tp.mesh);
   };
   const showTicks = c.ticks ?? true, showGrid = c.grid ?? true;
-  const showXTicks = c.xticks ?? showTicks; // off for category labels (bars … labels=)
-  const showYTicks = c.yticks ?? showTicks; // off for rows (a forest plot)
-  const each = (r, f) => {
+  // xticks/yticks: true/false, or a list of values to tick (and grid) at.
+  const showXTicks = Array.isArray(c.xticks) || (c.xticks ?? showTicks); // off for category labels (bars … labels=)
+  const showYTicks = Array.isArray(c.yticks) || (c.yticks ?? showTicks); // off for rows (a forest plot)
+  const each = (r, f, log, list) => {
+    // Given values are always labelled; generated ones skip the corner where the axes cross.
+    if (Array.isArray(list)) return list.filter((v) => v >= r[0] - 1e-9 && v <= r[1] + 1e-9).forEach((v) => f(v, false));
+    if (log) return D.logTicks(r).forEach((v) => f(v, false));
     const st = D.niceStep(r[1] - r[0]);
-    for (let v = Math.ceil(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) f(v);
+    for (let v = Math.ceil(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) f(v, true);
   };
-  each(xr, (v) => {
-    if (showGrid) grid.push(is3 ? [P(v, yr[0]), P(v, yr[1])] : [P(v, yr[0]), P(v, yr[1])]);
-    if (!showXTicks || Math.abs(v - o.x) < 1e-9) return;
+  each(xr, (v, gen) => {
+    if (showGrid) grid.push([P(v, yr[0]), P(v, yr[1])]);
+    if (!showXTicks || (gen && Math.abs(v - o.x) < 1e-9)) return;
     const p = P(v, o.y);
     ticks.push([p.clone().add(new THREE.Vector3(0, -tl, 0)), p.clone().add(new THREE.Vector3(0, tl, 0))]);
     label(D.fmtTick(v), p.clone().add(new THREE.Vector3(0, -0.32, 0)));
-  });
-  each(yr, (v) => {
+  }, xlog, c.xticks);
+  each(yr, (v, gen) => {
     if (showGrid) grid.push([P(xr[0], v), P(xr[1], v)]);
-    if (!showYTicks || Math.abs(v - o.y) < 1e-9) return;
+    if (!showYTicks || (gen && Math.abs(v - o.y) < 1e-9)) return;
     const p = P(o.x, v);
-    ticks.push(is3 ? [p.clone().add(new THREE.Vector3(-tl, 0, 0)), p.clone().add(new THREE.Vector3(tl, 0, 0))]
-      : [p.clone().add(new THREE.Vector3(-tl, 0, 0)), p.clone().add(new THREE.Vector3(tl, 0, 0))]);
+    ticks.push([p.clone().add(new THREE.Vector3(-tl, 0, 0)), p.clone().add(new THREE.Vector3(tl, 0, 0))]);
     label(D.fmtTick(v), p.clone().add(new THREE.Vector3(-0.2, 0, 0)), 'right');
-  });
+  }, ylog, c.yticks);
   if (is3) each(zr, (v) => {
     if (!showTicks || Math.abs(v - o.z) < 1e-9) return;
     const p = P(o.x, o.y, v);
