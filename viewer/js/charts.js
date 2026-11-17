@@ -358,29 +358,32 @@ export function addCharts(BUILD, { FG, PALETTE, axesOf, labelFor }) {
     const depth = Math.max(...c.bars.map((b) => b[1].length));
     const single = c.color ?? PALETTE[A.plots++ % PALETTE.length];
     const colors = Array.from({ length: depth }, (_, k) => (depth > 1 ? PALETTE[k % PALETTE.length] : single));
-    const base = Math.min(Math.max(0, A.y[0]), A.y[1]);
+    // Values count from 0; what lies outside the y range is clipped, so bars
+    // grow from the axis' low end when 0 isn't shown (always on a log axis).
+    const clampY = (v) => Math.min(Math.max(v, A.y[0]), A.y[1]);
+    const base = clampY(0);
     const segs = [];
     e.parts = {};
     e.pins = {};
     c.bars.forEach(([x, ys], i) => {
-      let cum = base;
+      let cum = 0;
       const mats = [];
       ys.forEach((y, k) => {
         const m = basic(e, colors[k], 'solid', 0.82);
         const q = quad(m);
         e.body.add(q);
-        segs.push({ q, x, lo: cum, hi: cum + y });
+        segs.push({ q, a: A.map(V3(x - w / 2, clampY(cum))), b: A.map(V3(x + w / 2, clampY(cum + y))) });
         cum += y;
         mats.push(m);
       });
       e.parts[`B${i + 1}`] = { mats };
-      e.pins[`B${i + 1}`] = { at: A.map(V3(x, cum)).add(V3(0, cum >= base ? 0.08 : -0.08)), dir: V3(0, cum >= base ? 1 : -1) };
+      const up = cum >= 0;
+      e.pins[`B${i + 1}`] = { at: A.map(V3(x, clampY(cum))).add(V3(0, up ? 0.08 : -0.08)), dir: V3(0, up ? 1 : -1) };
     });
+    const y0 = A.map(V3(A.x[0], base)).y;
     e.render = (p) => {
-      for (const s of segs) {
-        const lo = base + (s.lo - base) * p, hi = base + (s.hi - base) * p;
-        setQuad(s.q, A.map(V3(s.x - w / 2, lo)), A.map(V3(s.x + w / 2, hi)));
-      }
+      // Grow from the base in board space (even on a log axis).
+      for (const s of segs) setQuad(s.q, V3(s.a.x, y0 + (s.a.y - y0) * p, s.a.z), V3(s.b.x, y0 + (s.b.y - y0) * p, s.b.z));
     };
     if (c.labels) c.labels.split(',').forEach((t, i) => {
       if (c.bars[i]) text(e, e.obj, t.trim(), A.map(V3(c.bars[i][0], A.y[0])).add(V3(0, -0.34)), { size: 0.28 });

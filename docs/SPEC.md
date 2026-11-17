@@ -199,7 +199,8 @@ huge ones written 10⁻⁵), and everything on the axes (plots, points, bars,
 intervals, bands) is placed by log10 of its value. Plots are sampled evenly in
 log x. Ratio CIs and equivalence margins: `axes … x=0.5..4 xlog=true
 xticks="0.5,0.8,1,1.25,2,4"` with `errbar … horiz=true` and `band … x=0.8..1.25`.
-Bars start from the low end of a log y range. `contour` doesn't support log axes.
+Bars count from 0 and are clipped to the y range, so on a log axis (or one
+not showing 0) they rise from its low end to their value. `contour` doesn't support log axes.
 
 Data strings may be given as a `<<END` block instead (one or more items per
 line). The parser checks them: wrong counts and bad numbers are errors.
