@@ -314,7 +314,9 @@ if (params.has('lesson')) {
     if (transport) await new Promise((r) => { const t = setInterval(() => transport.connected && (clearInterval(t), r()), 50); setTimeout(r, 2000); });
     await run('clear\nboard\n', 'vcl');
     await run(editor.value, modeSel.value, true);
-    if (params.has('skip')) setTimeout(() => runtime.timeline.flush(), 300);
+    // Skip to the end. In mixed mode `say` beats are queued as their speech is
+    // ready, after this point, so keep flushing rather than once.
+    if (params.has('skip')) setInterval(() => runtime.timeline.busy && runtime.timeline.flush(), 150);
   })().catch((e) => log('error', e.message));
 }
 

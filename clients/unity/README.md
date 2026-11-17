@@ -85,7 +85,10 @@ tools/                unity.sh · build-quest.sh · install-quest.sh
 
 The following ops play as a dimmed `[op]` placeholder, so a lesson still runs
 through, and the status line notes each one: `img`, `svg`, `model`, `part`,
-`wire`, `block`, `frame`, `code`, `table` and `wave`. Also missing:
+`wire`, `block`, `frame`, `code`, `table`, `wave`, and the charts and
+diagrams `nn`, `grid`, `bits`, `bars`, `hist`, `scatter`, `errbar`, `band` and
+`contour` (their data arrive parsed, see `docs/IR.md`). A change aimed at one
+of their parts (`hl n.L1_3`) acts on the whole placeholder. Also missing:
 
 - **`tex`:** shown as plain text with Unicode symbols (`\frac`, Greek letters,
   sub- and superscripts), not typeset.

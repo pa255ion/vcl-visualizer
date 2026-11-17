@@ -58,7 +58,8 @@ END
 
 Anchors: `center top bottom left right front back start end`, plus **pins**:
 named connection points of parts (`R1.a`, `U1.y`), block ports (`cpu.clk`),
-code lines (`c.L3`), table rows (`t.R2`) and timing-diagram signals (`w.clk`).
+code lines (`c.L3`), table rows (`t.R2`), timing-diagram signals (`w.clk`),
+and the parts of `nn`, `grid`, `bits` and chart ops (§4.4, §4.8).
 The parser knows every entity's pins and rejects unknown ones with a list of
 the valid names.
 
@@ -176,9 +177,23 @@ Every drawing op accepts: `color=C` `opacity=N` `fx=draw|fade|grow|pop|none`
 
 | Op | Arguments | Keys |
 |---|---|---|
-| `axes` | `P` | centre; `x=R` `y=R` `z=R` (z makes them 3D) `size=V` (extent in board units) `grid=bool` `ticks=bool` `xlabel=S` `ylabel=S` `zlabel=S` |
-| `plot` | `ID S [S [S]]` | on axes ID: one string `y=f(x)`; two strings `x(t), y(t)`; three strings `x(t), y(t), z(t)`. `x=R` or `t=R` domain; `width=N` `dash=bool` (e.g. a fit or estimate next to data) |
+| `axes` | `P` | centre; `x=R` `y=R` `z=R` (z makes them 3D) `size=V` (extent in board units) `grid=bool` `ticks=bool` `xticks=bool` `yticks=bool` `xlabel=S` `ylabel=S` `zlabel=S` |
+| `plot` | `ID S [S [S]]` | on axes ID: one string `y=f(x)`; two strings `x(t), y(t)`; three strings `x(t), y(t), z(t)`. `x=R` or `t=R` domain; `width=N` `dash=bool` (e.g. a fit or estimate next to data) `step=bool` (a staircase) |
 | `surf` | `ID S` | surface `z=f(x,y)` on 3D axes; `x=R` `y=R` `res=N` `fill=C` `wire=bool` |
+
+| `contour` | `ID S` | contour lines of `z=f(x,y)` on 2D axes; `levels=N` (default 8, evenly between the lowest and highest value) `res=N` (grid, default 64) `x=R` `y=R` `width=N`; coloured low→high unless `color=` |
+| `bars` | `ID S` | bar chart: `"y y y"` (at x = 1, 2, 3…) or `"x,y x,y"`; `x,y1/y2/y3` stacks; `width=N` (bar width in data units, default 0.6 of the spacing) `labels="a,b,c"` (category names under the bars; give the axes `xticks=false`) `series="p,q,r"` (legend for stacks). Parts/pins `B1…` |
+| `hist` | `ID S` | histogram of the values in the string; `bins=N` (default Sturges) `range=R` (default min..max) `density=bool`. Parts/pins `B1…` |
+| `scatter` | `ID S` | points `"x,y x,y …"` (`x,y,z` on 3D axes); `size=N` (dot radius, default 0.09). Pins `P1…` |
+| `errbar` | `ID S` | intervals `"x,lo..hi"` or with an estimate `"x,y,lo..hi"`; `horiz=true` makes them horizontal (the first number is then the row's y, the estimate an x: a forest plot); `cap=N` `size=N` (dot) `width=N`. Pins `E1…` |
+| `band` | `ID` | shaded band with dashed edges: `y=lo..hi` (horizontal), `x=lo..hi` (vertical) or both (a box); `fill=C`; `label` sits inside its top-left corner. For margins (equivalence bounds) and regions |
+
+`plot … step=true` draws a staircase: flat runs and vertical risers at the
+jumps, located exactly (`plot ax "round(4x)/4" step=true` for a quantiser).
+`axes … xticks=false` (or `yticks=false`) hides the numbers along one axis only.
+
+Data strings may be given as a `<<END` block instead (one or more items per
+line). The parser checks them: wrong counts and bad numbers are errors.
 
 Expressions use `x y t`, `+ - * / ^`, implicit multiplication (`2x`, `3(x+1)`),
 `pi e`, and `sin cos tan asin acos atan atan2 sinh cosh tanh sqrt abs exp ln
@@ -217,17 +232,29 @@ log log2 floor ceil round min max pow sign mod`.
 `size` (largest dimension). With `vcl serve --assets DIR` your own files are
 at `assets/…`.
 
-### 4.8 Change things
+### 4.8 Diagrams with parts
+
+| Op | Arguments | Keys / parts |
+|---|---|---|
+| `nn` | `P S` | neural network: layer sizes `"4,6,6,3"`, layers left to right, neighbouring layers fully connected. `size=w,h` (default 2.6 per layer gap × 4) `labels="x,h,y"` (under the layers) `edges=dense\|none` `max=N` (layers bigger than N, default 8, show their first 3 and last 2 neurons around ⋮, with the size in the label) `pairs=true` (each neuron gets a small error node beside it, for predictive coding) `feedback=true` (dashed edges back from each layer to the previous one's error nodes, or neurons). Parts: `n.L1` layer 1 (`L0` is the input), `n.L1_3` its neuron 3 (1-based; `L0_196` in a collapsed layer of 196), `n.L1_3e` that neuron's error node, `n.E1` the edges into layer 1, `n.F1` the feedback edges out of layer 1. Pins: those, plus `L1_top`/`L1_bottom` above and below a layer |
+| `grid` | `P V S` | heatmap: `rows,cols` then rows×cols numbers (spaces, commas or new lines; `<<END` with one row per line reads well). `size=w,h` (default: cells up to 0.45, within 8×6) `cmap=gray\|div\|heat` (default `gray`, or `div` (blue-white-red around 0) when there are negatives) `range=R` (colour limits) `text=true` (print the numbers). Parts: `g.r2` row, `g.c3` column, `g.r2c3` cell (1-based). Pins: `r2` at a row's left end, `c3` at a column's top, `r2c3` at a cell's centre. `set g text="…"` gives it new values (same count) |
+| `bits` | `P S` | bit fields: one character per bit, fields split by `\|` (`"s\|iiii\|fffffff"` is Q4.7 with a sign bit). `values="0\|0011\|0100000"` (0, 1 or x per bit; without it the pattern's letters show, dimmed) `labels="sign,integer,fraction"` (one per field, under braces) `size=N` (box width, default 0.55, within 14 overall) `index=bool` (bit numbers above, default true). Parts: `b.b0`… single bits (b0 is the least significant, on the right), `b.F1`… fields, and each label as a name (`b.fraction`). `set b text="1\|0011\|…"` changes the values |
+
+`hl`, `color` and `fade` take parts as well as names: `hl n.L1_3`, `color n.E2
+red`, `fade n.L0 0.3`, `color g.r2c3 yellow`, `hl b.sign`, `color bars1.B2
+pink`. The parser lists the valid parts when one is misspelled.
+
+### 4.9 Change things
 
 | Op | Arguments | Keys / effect |
 |---|---|---|
 | `move` | `ID P` | animate position (centre) to P |
 | `rot` | `ID V` | animate rotation to Euler degrees `x,y,z` |
 | `scale` | `ID N` | animate uniform scale |
-| `color` | `ID C` | animate colour |
-| `fade` | `ID N` | animate opacity (0 hides but keeps) |
+| `color` | `ID C` | animate colour (also of a part, §4.8) |
+| `fade` | `ID N` | animate opacity (0 hides but keeps; also of a part) |
 | `set` | `ID` | any of `pos=P rot=V scale=N color=C opacity=N text=S focus=R` |
-| `hl` | `ID…` | brief highlight pulse; `color=C` |
+| `hl` | `ID…` | brief highlight pulse; `color=C`; also parts (`hl n.L1_3`) |
 | `spin` | `ID V` | continuous rotation, degrees/second per axis; `0,0,0` stops |
 | `group` | `ID…` | needs a name; bundles entities so they move/rotate together |
 
@@ -268,9 +295,10 @@ line 4: warning: rect: unknown key 'colour' (did you mean 'color'?)
 ```
 
 Warnings are also given for layout the parser can predict: a `block` too
-small for its title and ports, and `text`, `code`, `table`, `block` or `wave`
-placed at board coordinates that would run off the board (sizes are estimated
-from character counts, so treat a near miss as a hint), and any of those (or a
+small for its title and ports, and `text`, `code`, `table`, `block`, `wave`,
+`nn`, `grid` or `bits` placed at board coordinates that would run off the board
+(sizes are estimated from character counts, so treat a near miss as a hint),
+and any of those (or a
 `node`) that lands on another one already on the board. Anything with `on=` is
 in data coordinates and not checked, nor are labels, lines, shapes and `tex`;
 an entity that was moved, scaled, faded or grouped is no longer compared.

@@ -19,7 +19,9 @@ LLM reply ──text chunks──▶ vcl serve (Zig) ──JSON IR over WebSocke
 | Area | Ops |
 |---|---|
 | Geometry and annotation | points, lines, arrows, paths, polygons, rectangles, circles, angle marks, text, LaTeX |
-| Math | 2D and 3D axes, function and parametric plots, surfaces `z = f(x, y)` |
+| Math | 2D and 3D axes, function and parametric plots, step plots, surfaces `z = f(x, y)`, contour lines |
+| Charts and data | `bars` (stacked, with categories and a legend), `hist`, `scatter`, `errbar` (incl. forest plots), shaded `band`s; heatmaps (`grid`) |
+| Structured diagrams | neural networks (`nn`, with error nodes and feedback edges for predictive coding), bit fields (`bits`, for fixed-point formats); `hl n.L1_3`, `color n.E2 red` act on their parts |
 | Diagrams | labelled nodes and edges; hierarchical `block`s with named ports, `frame`s around subsystems |
 | Circuits | 26 schematic `part`s (passives, sources, diodes, BJTs, MOSFETs, op-amp, logic gates, D flip-flop, mux) with named pins, and right-angle `wire`s with junction dots and bus widths |
 | Code and data | syntax-highlighted `code` with line focus, `table`s (truth tables) with row focus, timing diagrams (`wave`) |
@@ -187,7 +189,8 @@ node --test viewer/test/*.test.mjs    # expression compiler, scheduler
 * A rigged avatar, interacting with entities in VR (grab or ask about a thing),
   `morph` between shapes, and a binary wire format.
 * The Unity client covers the core ops but not yet images, SVG, models,
-  circuits, blocks, code, tables or timing diagrams (see its README).
+  circuits, blocks, code, tables, timing diagrams, charts or `nn`/`grid`/`bits`
+  diagrams (see its README).
 
 ## Credits
 

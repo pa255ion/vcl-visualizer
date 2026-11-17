@@ -25,9 +25,24 @@ angle A V B right=true         text P "S" size=N align=left|center|right   tex P
 node P "S" shape=circle|box|pill   edge a b dir=fwd|back|both|none bend=N label="S"
 axes P x=lo..hi y=lo..hi [z=lo..hi] size=w,h[,d] xlabel="S"
 plot AX "f(x)" dash=true | plot AX "x(t)" "y(t)" ["z(t)"] t=lo..hi        surf AX "f(x,y)"   (3D axes)
+contour AX "f(x,y)" levels=N   bars AX "y y y" | "x,y x,y" | "x,y1/y2/y3" labels="a,b,c" series="p,q,r" width=N
+hist AX "values…" bins=N   scatter AX "x,y x,y …"   errbar AX "x,lo..hi x,y,lo..hi" horiz=true   band AX y=lo..hi | x=lo..hi
+plot AX "round(4x)/4" step=true (staircase)   axes … xticks=false | yticks=false (numbers off on one axis: bar labels, forest-plot rows)
 box P w,h,d   sphere P r   cyl P P r   img P "url" size=N   svg P "url"|<<END size=N   model P "x.glb|x.stl|x.obj" size=N
 move a P   rot a x,y,z(deg)   scale a N   color a C   fade a N   set a text="S" color=C pos=P
 hl a b color=C (pulse)   spin a x,y,z (deg/s; 0,0,0 stops)   g: group a b c
+```
+
+**Diagrams with parts** (`hl`, `color`, `fade` take a part: `hl n.L1_3`, `color n.E2 red`, `color g.r2c3 yellow`)
+```
+n: nn P "784,64,10" size=w,h labels="x,h,y" pairs=true feedback=true edges=dense|none max=8
+   parts/pins: n.L1 (layer; L0 = input) n.L1_3 (neuron, 1-based) n.L1_3e (error node) n.E1 (edges into L1) n.F1 (feedback); pins n.L1_top n.L1_bottom
+   layers bigger than max show first 3 + last 2 around ⋮ (n.L0_784 exists, n.L0_10 doesn't)
+g: grid P rows,cols "v v v …" size=w,h cmap=gray|div|heat range=lo..hi text=true      (or <<END, a row per line)
+   parts/pins: g.r2 g.c3 g.r2c3 (1-based)    set g text="…" (new values, same count)
+b: bits P "s|iiii|fffffff" labels="sign,integer,fraction" values="0|0011|0100000" size=N
+   parts/pins: b.b0 (LSB) … b.F1 … and labels as names (b.sign)    set b text="1|0011|0100000"
+bars/hist: parts/pins B1 …   scatter: pins P1 …   errbar: pins E1 …
 ```
 
 **Engineering diagrams** (pins are points: `R1.a`, `U1.y`, `cpu.clk`)

@@ -652,6 +652,7 @@ namespace Vcl
         void BuildPlaceholder(Entity e, Cmd c)
         {
             if (c.Has("at")) e.Obj.localPosition = e.ToParent(c["at"]);
+            else if (c.Has("axes") && Entities.TryGetValue(c.Str("axes"), out var ax)) e.Obj.position = ax.Obj.position;
             else if (c.Has("pts")) e.Obj.localPosition = e.ToParent(c.List("pts")[0]);
             var t = Draw.Text(e.Body, $"[{c.Op}]", 0.4f, Draw.Hex("#6b7a8f"), "center", false);
             e.Track(t, "text");

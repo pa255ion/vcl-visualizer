@@ -40,7 +40,12 @@ pub const Param = struct {
     of_op: ?[]const u8 = null,
     /// For `.str`: keep backslashes (LaTeX); only \" is unescaped.
     raw: bool = false,
+    /// For `.id`: `name.pin` is accepted for diagrams with parts (`part_ops`).
+    part: bool = false,
 };
+
+/// Ops whose pins are also parts that `hl`, `color` and `fade` can target.
+pub const part_ops = [_][]const u8{ "nn", "grid", "bits", "bars", "hist" };
 
 pub const Kind = enum { draw, change, flow };
 
@@ -75,6 +80,9 @@ const dash = P("dash", .boolean);
 const fill = P("fill", .color);
 const size = P("size", .num);
 const wire = P("wire", .boolean);
+const on_axes: Param = .{ .name = "axes", .ty = .id, .of_op = "axes" };
+/// A change target that may also be one part of a diagram (`n.L1_3`, `g.r2c3`).
+const part_target: Param = .{ .name = "target", .ty = .id, .part = true };
 
 /// Schematic symbols and their pins (the renderer draws them; see viewer/js/parts.js).
 pub const part_pins = [_]struct { []const u8, []const u8 }{
@@ -134,11 +142,25 @@ pub const ops = [_]Op{
     // graphs
     .{ .name = "axes", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{
         P("x", .range),      P("y", .range),      P("z", .range),       P("size", .vec),
-        P("grid", .boolean), P("ticks", .boolean), P("xlabel", .str),  P("ylabel", .str),
+        P("grid", .boolean), P("ticks", .boolean), P("xticks", .boolean), P("yticks", .boolean), P("xlabel", .str),  P("ylabel", .str),
         P("zlabel", .str),
     }, .dur = 1.0 },
-    .{ .name = "plot", .kind = .draw, .pos = &.{ .{ .name = "axes", .ty = .id, .of_op = "axes" }, .{ .name = "exprs", .ty = .str, .many = true, .max = 3 } }, .keys = &.{ P("x", .range), P("t", .range), width, dash }, .dur = 1.2 },
-    .{ .name = "surf", .kind = .draw, .pos = &.{ .{ .name = "axes", .ty = .id, .of_op = "axes" }, P("expr", .str) }, .keys = &.{ P("x", .range), P("y", .range), P("res", .num), fill, wire }, .dur = 1.2 },
+    .{ .name = "plot", .kind = .draw, .pos = &.{ on_axes, .{ .name = "exprs", .ty = .str, .many = true, .max = 3 } }, .keys = &.{ P("x", .range), P("t", .range), width, dash, P("step", .boolean) }, .dur = 1.2 },
+    .{ .name = "surf", .kind = .draw, .pos = &.{ on_axes, P("expr", .str) }, .keys = &.{ P("x", .range), P("y", .range), P("res", .num), fill, wire }, .dur = 1.2 },
+    .{ .name = "contour", .kind = .draw, .pos = &.{ on_axes, P("expr", .str) }, .keys = &.{ P("x", .range), P("y", .range), P("res", .num), P("levels", .num), width }, .dur = 1.2 },
+    .{ .name = "bars", .kind = .draw, .pos = &.{ on_axes, P("data", .str) }, .keys = &.{ width, P("labels", .str), P("series", .str) }, .dur = 0.8 },
+    .{ .name = "hist", .kind = .draw, .pos = &.{ on_axes, P("data", .str) }, .keys = &.{ P("bins", .num), P("range", .range), P("density", .boolean) }, .dur = 0.8 },
+    .{ .name = "scatter", .kind = .draw, .pos = &.{ on_axes, P("data", .str) }, .keys = &.{size}, .dur = 0.6 },
+    .{ .name = "errbar", .kind = .draw, .pos = &.{ on_axes, P("data", .str) }, .keys = &.{ P("horiz", .boolean), P("cap", .num), width, size }, .dur = 0.6 },
+    .{ .name = "band", .kind = .draw, .pos = &.{on_axes}, .keys = &.{ P("x", .range), P("y", .range), fill }, .dur = 0.5 },
+    // structured diagrams
+    .{ .name = "nn", .kind = .draw, .pos = &.{ P("at", .point), P("layers", .str) }, .keys = &.{
+        P("size", .vec), P("labels", .str), W("edges", &.{ "dense", "none" }), P("pairs", .boolean), P("feedback", .boolean), P("max", .num),
+    }, .dur = 1.2 },
+    .{ .name = "grid", .kind = .draw, .pos = &.{ P("at", .point), P("dims", .vec), P("values", .str) }, .keys = &.{
+        P("size", .vec), W("cmap", &.{ "gray", "div", "heat" }), P("text", .boolean), P("range", .range),
+    }, .dur = 0.8 },
+    .{ .name = "bits", .kind = .draw, .pos = &.{ P("at", .point), P("pattern", .str) }, .keys = &.{ P("labels", .str), P("values", .str), size, P("index", .boolean) }, .dur = 0.8 },
     // 3D
     .{ .name = "box", .kind = .draw, .pos = &.{ P("at", .point), P("size", .vec) }, .keys = &.{wire}, .dur = 0.6 },
     .{ .name = "sphere", .kind = .draw, .pos = &.{ P("at", .point), P("r", .num) }, .keys = &.{wire}, .dur = 0.6 },
@@ -148,13 +170,13 @@ pub const ops = [_]Op{
     .{ .name = "move", .kind = .change, .pos = &.{ P("target", .id), P("to", .point) }, .dur = 0.6 },
     .{ .name = "rot", .kind = .change, .pos = &.{ P("target", .id), P("rot", .vec) }, .dur = 0.6 },
     .{ .name = "scale", .kind = .change, .pos = &.{ P("target", .id), P("scale", .num) }, .dur = 0.5 },
-    .{ .name = "color", .kind = .change, .pos = &.{ P("target", .id), P("color", .color) }, .dur = 0.4 },
-    .{ .name = "fade", .kind = .change, .pos = &.{ P("target", .id), P("opacity", .num) }, .dur = 0.4 },
+    .{ .name = "color", .kind = .change, .pos = &.{ part_target, P("color", .color) }, .dur = 0.4 },
+    .{ .name = "fade", .kind = .change, .pos = &.{ part_target, P("opacity", .num) }, .dur = 0.4 },
     .{ .name = "set", .kind = .change, .pos = &.{P("target", .id)}, .keys = &.{
         P("pos", .point), P("rot", .vec), P("scale", .num), P("color", .color), P("opacity", .num), P("text", .str),
         P("focus", .range),
     }, .dur = 0.5 },
-    .{ .name = "hl", .kind = .change, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .keys = &.{P("color", .color)}, .dur = 0.8, .replay = false },
+    .{ .name = "hl", .kind = .change, .pos = &.{.{ .name = "ids", .ty = .id, .many = true, .part = true }}, .keys = &.{P("color", .color)}, .dur = 0.8, .replay = false },
     .{ .name = "spin", .kind = .change, .pos = &.{ P("target", .id), P("rate", .vec) }, .dur = 0 },
     .{ .name = "group", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0, .needs_name = true },
 };
@@ -534,6 +556,10 @@ const LineParser = struct {
             try fields.append(p.arena, .{ .name = k, .val = v });
         }
 
+        // Ops drawn on axes (plot, bars, …) belong to them: deleting the axes deletes them.
+        if (op.pos.len > 0 and op.pos[0].of_op != null and std.mem.eql(u8, op.pos[0].name, "axes"))
+            on = fields.items[0].val.id;
+
         // Op-specific checks.
         if (std.mem.eql(u8, op.name, "wait")) {
             if (fields.items[0].val.num < 0) return p.fail("wait: seconds must be >= 0", .{});
@@ -554,8 +580,9 @@ const LineParser = struct {
         }
         const box: ?[4]f64 = if (on == null) try p.lintBounds(fields.items) else null;
         var samples: ?[]const u8 = null;
-        if (std.mem.eql(u8, op.name, "plot") or std.mem.eql(u8, op.name, "surf"))
+        if (std.mem.eql(u8, op.name, "plot") or std.mem.eql(u8, op.name, "surf") or std.mem.eql(u8, op.name, "contour"))
             samples = try p.sample(fields.items);
+        const derived: ?Derived = try p.derive(fields.items);
         if (std.mem.eql(u8, op.name, "group")) {
             for (fields.items[0].val.list) |v| if (std.mem.eql(u8, v.id, name.?))
                 return p.fail("group: '{s}' can't contain itself", .{v.id});
@@ -651,6 +678,7 @@ const LineParser = struct {
                 };
                 ports = all.items;
             }
+            if (derived) |d| ports = d.ports;
             if (box) |b| try p.lintOverlap(i, b);
             try p.scene.add(i, op.name, on, ports);
             if (std.mem.eql(u8, op.name, "axes")) p.scene.names.getPtr(i).?.axes = axesRanges(fields.items);
@@ -679,6 +707,7 @@ const LineParser = struct {
             try writeValue(o, f.val);
         }
         if (samples) |sm| if (p.scene.sample) try o.writeAll(sm);
+        if (derived) |d| try o.writeAll(d.json);
         try o.writeAll("}\n");
     }
 
@@ -748,6 +777,24 @@ const LineParser = struct {
                 return p.fail("{s}: unknown colour '{s}' (use a name like blue or #rrggbb)", .{ op, text });
             },
             .id => {
+                if (param.part) if (std.mem.indexOfScalar(u8, text, '.')) |dot| {
+                    const n = text[0..dot];
+                    const pin = text[dot + 1 ..];
+                    if (!isIdent(n)) return p.fail("{s}: expected a name or name.part for '{s}', got '{s}'", .{ op, param.name, text });
+                    const e = try p.lookup(n);
+                    const ok = for (part_ops) |po| {
+                        if (std.mem.eql(u8, po, e.op)) break true;
+                    } else false;
+                    if (!ok) return p.fail("{s}: '{s}' is a {s}; only parts of nn, grid, bits, bars and hist can be targeted (name.part)", .{ op, n, e.op });
+                    if (!e.hasPort(pin)) {
+                        var cands: std.ArrayList([]const u8) = .empty;
+                        var it = std.mem.splitScalar(u8, e.ports, ',');
+                        while (it.next()) |pn| if (pn.len > 0) try cands.append(p.arena, pn);
+                        const hint = if (suggest(pin, cands.items)) |sg| try std.fmt.allocPrint(p.arena, " (did you mean '{s}'?)", .{sg}) else "";
+                        return p.fail("{s}: '{s}' has no part '{s}'{s}", .{ op, n, pin, hint });
+                    }
+                    return .{ .id = text };
+                };
                 if (!isIdent(text)) return p.fail("{s}: expected a name for '{s}', got '{s}'", .{ op, param.name, text });
                 const e = try p.lookup(text);
                 if (param.of_op) |want| if (!std.mem.eql(u8, e.op, want))
@@ -838,6 +885,45 @@ const LineParser = struct {
             return buf.written();
         }
 
+        if (std.mem.eql(u8, op, "contour")) {
+            if (A.is3) return p.fail("contour: needs 2D axes (for a height field on 3D axes use surf)", .{});
+            const src = fieldVal(fields, "expr").?.str;
+            const f = expr.compile(&ep, src, "xy") catch |e| return p.exprFail(e, src, &ep);
+            const xr = if (fieldVal(fields, "x")) |v| v.range else A.x;
+            const yr = if (fieldVal(fields, "y")) |v| v.range else A.y;
+            const res = if (fieldVal(fields, "res")) |v| v.num else 64;
+            const n: usize = @intFromFloat(std.math.clamp(@floor(res + 0.5), 8, 200));
+            const nf: f64 = @floatFromInt(n);
+            const zs = try p.arena.alloc(f64, (n + 1) * (n + 1));
+            var lo = std.math.inf(f64);
+            var hi = -std.math.inf(f64);
+            for (0..n + 1) |j| for (0..n + 1) |i| {
+                const z = f.eval(.{
+                    .x = xr[0] + (xr[1] - xr[0]) * @as(f64, @floatFromInt(i)) / nf,
+                    .y = yr[0] + (yr[1] - yr[0]) * @as(f64, @floatFromInt(j)) / nf,
+                });
+                zs[j * (n + 1) + i] = z;
+                if (std.math.isFinite(z)) {
+                    lo = @min(lo, z);
+                    hi = @max(hi, z);
+                }
+            };
+            if (!(lo < hi)) return p.fail("contour: \"{s}\" is constant or undefined over this range: no levels to draw", .{src});
+            const nl: usize = @intFromFloat(std.math.clamp(@round(if (fieldVal(fields, "levels")) |v| v.num else 8), 1, 40));
+            w.writeAll(",\"contours\":[") catch return error.OutOfMemory;
+            for (0..nl) |k| {
+                const lv = lo + (hi - lo) * @as(f64, @floatFromInt(k + 1)) / @as(f64, @floatFromInt(nl + 1));
+                if (k > 0) try w.writeByte(',');
+                try w.writeAll("{\"z\":");
+                try writeFixed(w, lv, 6);
+                try w.writeAll(",\"polys\":");
+                try contourLevel(p.arena, w, zs, n, xr, yr, lv, .{ dx, dy });
+                try w.writeByte('}');
+            }
+            try w.writeByte(']');
+            return buf.written();
+        }
+
         const srcs = fieldVal(fields, "exprs").?.list;
         var fns: [3]expr.Expr = undefined;
         for (srcs, 0..) |v, k| fns[k] = expr.compile(&ep, v.str, "xt") catch |e| return p.exprFail(e, v.str, &ep);
@@ -891,13 +977,33 @@ const LineParser = struct {
             const xr = if (fieldVal(fields, "x")) |v| v.range else A.x;
             const yspan = A.y[1] - A.y[0];
             const N = 600;
+            const stairs = if (fieldVal(fields, "step")) |v| v.boolean else false;
             var prev: ?f64 = null;
+            var prev_x: f64 = xr[0];
             for (0..N + 1) |i| {
                 const x = xr[0] + (xr[1] - xr[0]) * @as(f64, @floatFromInt(i)) / N;
                 const y = fns[0].eval(.{ .x = x, .t = x });
                 const in = std.math.isFinite(y) and (A.is3 or (y >= A.y[0] - 0.05 * yspan and y <= A.y[1] + 0.05 * yspan));
-                if (!in or (prev != null and !A.is3 and @abs(y - prev.?) > yspan))
+                if (stairs and in and prev != null and y != prev.?) {
+                    // A staircase: find where the value jumps (bisection), then run flat to it and rise.
+                    var a = prev_x;
+                    var b = x;
+                    for (0..40) |_| {
+                        const m = (a + b) / 2;
+                        const ym = fns[0].eval(.{ .x = m, .t = m });
+                        if (@abs(ym - prev.?) <= @abs(ym - y)) a = m else b = m;
+                    }
+                    step.ok(w, &polys, &cur, &pending, .{ b, prev.?, 0 }, d3) catch return error.OutOfMemory;
+                    step.ok(w, &polys, &cur, &pending, .{ b, y, 0 }, d3) catch return error.OutOfMemory;
+                    if (x - b < 1e-9 * @abs(xr[1] - xr[0])) { // the riser is at this sample: done with it
+                        prev_x = x;
+                        prev = y;
+                        continue;
+                    }
+                } else if (!in or (prev != null and !A.is3 and @abs(y - prev.?) > yspan))
                     step.brk(w, &polys, &cur, &pending) catch return error.OutOfMemory;
+                prev_x = x;
+                if (stairs and in and prev != null and y == prev.? and i != N) continue; // flat: only the corners matter
                 if (in) step.ok(w, &polys, &cur, &pending, .{ x, y, 0 }, d3) catch return error.OutOfMemory;
                 prev = if (in) y else null;
             }
@@ -926,6 +1032,303 @@ const LineParser = struct {
             return p.fail("plot: nothing to draw: the curve has no finite points for t in this range", .{});
         }
         return buf.written();
+    }
+
+    const Derived = struct { json: []const u8, ports: []const u8 };
+    const PinList = struct {
+        arena: Allocator,
+        list: std.ArrayList(u8) = .empty,
+        fn add(l: *PinList, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+            if (l.list.items.len > 0) try l.list.append(l.arena, ',');
+            try l.list.print(l.arena, fmt, args);
+        }
+        fn has(l: *PinList, name: []const u8) bool {
+            var it = std.mem.splitScalar(u8, l.list.items, ',');
+            while (it.next()) |x| if (std.mem.eql(u8, x, name)) return true;
+            return false;
+        }
+    };
+
+    /// The data strings of nn, grid, bits, bars, hist, scatter and errbar,
+    /// parsed into JSON arrays (renderers never parse them), and their pins.
+    fn derive(p: *LineParser, fields: anytype) Error!?Derived {
+        const op = p.op.name;
+        var buf: std.Io.Writer.Allocating = .init(p.arena);
+        const w = &buf.writer;
+        var pins: PinList = .{ .arena = p.arena };
+        if (std.mem.eql(u8, op, "nn")) {
+            try p.deriveNn(fields, w, &pins);
+        } else if (std.mem.eql(u8, op, "grid")) {
+            try p.deriveGrid(fields, w, &pins);
+        } else if (std.mem.eql(u8, op, "bits")) {
+            try p.deriveBits(fields, w, &pins);
+        } else if (std.mem.eql(u8, op, "bars")) {
+            try p.deriveBars(fields, w, &pins);
+        } else if (std.mem.eql(u8, op, "hist")) {
+            try p.deriveHist(fields, w, &pins);
+        } else if (std.mem.eql(u8, op, "scatter")) {
+            const A = try p.axesOf(fields);
+            try w.writeAll(",\"pts\":[");
+            var it = std.mem.tokenizeAny(u8, fieldStr(fields, "data").?, " \t\r\n;");
+            var n: usize = 0;
+            while (it.next()) |item| : (n += 1) {
+                const v = parseVec(item) orelse return p.fail("scatter: expected points like \"1,2 3,4\", got '{s}'", .{item});
+                if (std.mem.count(u8, item, ",") == 2 and !A.is3) return p.fail("scatter: '{s}' has a z, but the axes are 2D", .{item});
+                if (n > 0) try w.writeByte(',');
+                try writeVec(w, v);
+                try pins.add("P{d}", .{n + 1});
+            }
+            if (n == 0) return p.fail("scatter: no points; write them as \"x,y x,y …\"", .{});
+            try w.writeByte(']');
+        } else if (std.mem.eql(u8, op, "errbar")) {
+            try w.writeAll(",\"bars\":[");
+            var it = std.mem.tokenizeAny(u8, fieldStr(fields, "data").?, " \t\r\n;");
+            var n: usize = 0;
+            while (it.next()) |item| : (n += 1) {
+                const bad = "errbar: expected \"x,lo..hi\" or \"x,y,lo..hi\" items (y,lo..hi with horiz=true), got '{s}'";
+                const last = std.mem.lastIndexOfScalar(u8, item, ',') orelse return p.fail(bad, .{item});
+                const dots = std.mem.indexOf(u8, item[last + 1 ..], "..") orelse return p.fail(bad, .{item});
+                const lo = parseNum(item[last + 1 ..][0..dots]) orelse return p.fail(bad, .{item});
+                const hi = parseNum(item[last + 1 ..][dots + 2 ..]) orelse return p.fail(bad, .{item});
+                if (lo > hi) return p.fail("errbar: interval '{s}' must go from low to high", .{item[last + 1 ..]});
+                var head = std.mem.splitScalar(u8, item[0..last], ',');
+                const x = parseNum(head.next().?) orelse return p.fail(bad, .{item});
+                const y: ?f64 = if (head.next()) |t| parseNum(t) orelse return p.fail(bad, .{item}) else null;
+                if (head.next() != null) return p.fail(bad, .{item});
+                if (n > 0) try w.writeByte(',');
+                try w.writeByte('[');
+                try writeNum(w, x);
+                try w.writeByte(',');
+                if (y) |v| try writeNum(w, v) else try w.writeAll("null");
+                try w.writeByte(',');
+                try writeNum(w, lo);
+                try w.writeByte(',');
+                try writeNum(w, hi);
+                try w.writeByte(']');
+                try pins.add("E{d}", .{n + 1});
+            }
+            if (n == 0) return p.fail("errbar: no intervals; write them as \"x,lo..hi …\"", .{});
+            try w.writeByte(']');
+        } else if (std.mem.eql(u8, op, "band")) {
+            if (fieldVal(fields, "x") == null and fieldVal(fields, "y") == null)
+                return p.fail("band: give x=lo..hi (a vertical strip), y=lo..hi (a horizontal one) or both", .{});
+            return null;
+        } else return null;
+        return .{ .json = buf.written(), .ports = pins.list.items };
+    }
+
+    fn axesOf(p: *LineParser, fields: anytype) Error!AxesRanges {
+        const name = fieldVal(fields, "axes").?.id;
+        const e = p.scene.names.get(name) orelse return p.fail("{s}: unknown name '{s}'", .{ p.op.name, name });
+        return e.axes orelse p.fail("{s}: '{s}' is not axes", .{ p.op.name, name });
+    }
+
+    fn deriveNn(p: *LineParser, fields: anytype, w: *Writer, pins: *PinList) Error!void {
+        var counts: std.ArrayList(u32) = .empty;
+        var it = std.mem.tokenizeAny(u8, fieldStr(fields, "layers").?, ", \t");
+        while (it.next()) |t| {
+            const n = std.fmt.parseInt(u32, t, 10) catch return p.fail("nn: layer sizes are whole numbers, like \"4,6,6,3\"; got '{s}'", .{t});
+            if (n < 1 or n > 1_000_000) return p.fail("nn: layer size {d} is out of range (1..1000000)", .{n});
+            try counts.append(p.arena, n);
+        }
+        if (counts.items.len == 0 or counts.items.len > 16) return p.fail("nn: give 1 to 16 layer sizes, like \"4,6,6,3\"", .{});
+        const max_shown: u32 = @intFromFloat(std.math.clamp(@round(if (fieldVal(fields, "max")) |v| v.num else 8), 3, 30));
+        const pairs = if (fieldVal(fields, "pairs")) |v| v.boolean else false;
+        const feedback = if (fieldVal(fields, "feedback")) |v| v.boolean else false;
+        const dense = !std.mem.eql(u8, fieldStr(fields, "edges") orelse "dense", "none");
+        if (fieldStr(fields, "labels")) |l| {
+            const n = std.mem.count(u8, l, ",") + 1;
+            if (n != counts.items.len) try p.warn("nn: {d} labels for {d} layers", .{ n, counts.items.len });
+        }
+        try w.writeAll(",\"sizes\":[");
+        for (counts.items, 0..) |n, i| {
+            if (i > 0) try w.writeByte(',');
+            try w.print("{d}", .{n});
+        }
+        try w.writeAll("],\"shown\":[");
+        for (counts.items, 0..) |n, i| {
+            if (i > 0) try w.writeByte(',');
+            try w.writeByte('[');
+            // A big layer shows its first and last few neurons around an ellipsis.
+            const c: u32 = @max(3, (max_shown * 6 + 5) / 10);
+            const top = if (n <= max_shown) n else (c + 1) / 2;
+            const bottom = if (n <= max_shown) 0 else c - top;
+            var first = true;
+            var j: u32 = 1;
+            while (j <= n) : (j += 1) {
+                if (j > top and j <= n - bottom) {
+                    j = n - bottom;
+                    continue;
+                }
+                if (!first) try w.writeByte(',');
+                first = false;
+                try w.print("{d}", .{j});
+                try pins.add("L{d}_{d}", .{ i, j });
+                if (pairs) try pins.add("L{d}_{d}e", .{ i, j });
+            }
+            try w.writeByte(']');
+            try pins.add("L{d},L{d}_top,L{d}_bottom", .{ i, i, i });
+            if (i > 0 and dense) try pins.add("E{d}", .{i});
+            if (i > 0 and feedback) try pins.add("F{d}", .{i});
+        }
+        try w.writeByte(']');
+    }
+
+    fn deriveGrid(p: *LineParser, fields: anytype, w: *Writer, pins: *PinList) Error!void {
+        const d = fieldVal(fields, "dims").?.vec;
+        if (d[0] != @round(d[0]) or d[1] != @round(d[1]) or d[0] < 1 or d[1] < 1 or d[0] > 256 or d[1] > 256)
+            return p.fail("grid: dims are whole numbers rows,cols (1..256 each), got {d},{d}", .{ d[0], d[1] });
+        const rows: usize = @intFromFloat(d[0]);
+        const cols: usize = @intFromFloat(d[1]);
+        try w.writeAll(",\"cells\":[");
+        var it = std.mem.tokenizeAny(u8, fieldStr(fields, "values").?, " \t\r\n,;");
+        var n: usize = 0;
+        while (it.next()) |t| : (n += 1) {
+            const v = parseNum(t) orelse return p.fail("grid: '{s}' is not a number (values are separated by spaces, commas or new lines)", .{t});
+            if (n > 0) try w.writeByte(',');
+            if (n < rows * cols) try writeNum(w, v);
+        }
+        if (n != rows * cols) return p.fail("grid: {d}x{d} needs {d} values, got {d}", .{ rows, cols, rows * cols, n });
+        try w.writeByte(']');
+        for (1..rows + 1) |r| try pins.add("r{d}", .{r});
+        for (1..cols + 1) |c| try pins.add("c{d}", .{c});
+        if (rows * cols <= 4096) for (1..rows + 1) |r| for (1..cols + 1) |c| try pins.add("r{d}c{d}", .{ r, c });
+    }
+
+    fn deriveBits(p: *LineParser, fields: anytype, w: *Writer, pins: *PinList) Error!void {
+        const pattern = fieldStr(fields, "pattern").?;
+        var widths: std.ArrayList(usize) = .empty;
+        var total: usize = 0;
+        var it = std.mem.splitScalar(u8, pattern, '|');
+        while (it.next()) |g| {
+            var n: usize = 0;
+            for (g) |ch| if (ch != ' ') {
+                n += 1;
+            };
+            if (n == 0) return p.fail("bits: empty field in \"{s}\" (fields are separated by |, one character per bit)", .{pattern});
+            try widths.append(p.arena, n);
+            total += n;
+        }
+        if (total > 64) return p.fail("bits: {d} bits; at most 64", .{total});
+        if (fieldStr(fields, "values")) |vals| {
+            var vi = std.mem.splitScalar(u8, vals, '|');
+            var k: usize = 0;
+            while (vi.next()) |g| : (k += 1) {
+                var n: usize = 0;
+                for (g) |ch| {
+                    if (ch == ' ') continue;
+                    if (std.mem.indexOfScalar(u8, "01x?-", ch) == null)
+                        return p.fail("bits: values are 0, 1 or x per bit, got '{c}' in \"{s}\"", .{ ch, vals });
+                    n += 1;
+                }
+                if (k >= widths.items.len or n != widths.items[k])
+                    return p.fail("bits: values \"{s}\" must match the fields of \"{s}\" (same | groups, one digit per bit)", .{ vals, pattern });
+            }
+            if (k != widths.items.len) return p.fail("bits: values \"{s}\" must match the fields of \"{s}\" (same | groups, one digit per bit)", .{ vals, pattern });
+        }
+        try w.writeAll(",\"widths\":[");
+        for (widths.items, 0..) |n, i| {
+            if (i > 0) try w.writeByte(',');
+            try w.print("{d}", .{n});
+        }
+        try w.writeByte(']');
+        for (0..total) |b| try pins.add("b{d}", .{b});
+        for (1..widths.items.len + 1) |f| try pins.add("F{d}", .{f});
+        if (fieldStr(fields, "labels")) |labels| {
+            const n = std.mem.count(u8, labels, ",") + 1;
+            if (n != widths.items.len) return p.fail("bits: {d} labels for {d} fields", .{ n, widths.items.len });
+            var li = std.mem.splitScalar(u8, labels, ',');
+            while (li.next()) |l| {
+                const pin = try wavePin(p.arena, l);
+                if (pin.len == 0 or std.meta.stringToEnum(Anchor, pin) != null or pins.has(pin)) continue;
+                try pins.add("{s}", .{pin});
+            }
+        }
+    }
+
+    fn deriveBars(p: *LineParser, fields: anytype, w: *Writer, pins: *PinList) Error!void {
+        try w.writeAll(",\"bars\":[");
+        var it = std.mem.tokenizeAny(u8, fieldStr(fields, "data").?, " \t\r\n;");
+        var n: usize = 0;
+        var depth: usize = 0;
+        while (it.next()) |item| : (n += 1) {
+            const comma = std.mem.indexOfScalar(u8, item, ',');
+            const x: f64 = if (comma) |c| parseNum(item[0..c]) orelse
+                return p.fail("bars: bad x in '{s}' (items are y, x,y or x,y1/y2/y3 for stacks)", .{item}) else @floatFromInt(n + 1);
+            if (n > 0) try w.writeByte(',');
+            try w.writeByte('[');
+            try writeNum(w, x);
+            try w.writeAll(",[");
+            var ys = std.mem.splitScalar(u8, item[if (comma) |c| c + 1 else 0..], '/');
+            var k: usize = 0;
+            while (ys.next()) |t| : (k += 1) {
+                const y = parseNum(t) orelse return p.fail("bars: bad value '{s}' in '{s}' (items are y, x,y or x,y1/y2/y3 for stacks)", .{ t, item });
+                if (k > 0) try w.writeByte(',');
+                try writeNum(w, y);
+            }
+            depth = @max(depth, k);
+            try w.writeAll("]]");
+            try pins.add("B{d}", .{n + 1});
+        }
+        if (n == 0) return p.fail("bars: no bars; write them as \"y y y\" or \"x,y x,y\"", .{});
+        try w.writeByte(']');
+        if (fieldStr(fields, "labels")) |l| {
+            const k = std.mem.count(u8, l, ",") + 1;
+            if (k != n) return p.fail("bars: {d} labels for {d} bars", .{ k, n });
+        }
+        if (fieldStr(fields, "series")) |l| {
+            const k = std.mem.count(u8, l, ",") + 1;
+            if (k != depth) try p.warn("bars: {d} series names for stacks of {d}", .{ k, depth });
+        }
+    }
+
+    fn deriveHist(p: *LineParser, fields: anytype, w: *Writer, pins: *PinList) Error!void {
+        var vals: std.ArrayList(f64) = .empty;
+        var it = std.mem.tokenizeAny(u8, fieldStr(fields, "data").?, " \t\r\n,;");
+        while (it.next()) |t| try vals.append(p.arena, parseNum(t) orelse return p.fail("hist: '{s}' is not a number", .{t}));
+        if (vals.items.len == 0) return p.fail("hist: no values", .{});
+        var lo = std.math.inf(f64);
+        var hi = -std.math.inf(f64);
+        for (vals.items) |v| {
+            lo = @min(lo, v);
+            hi = @max(hi, v);
+        }
+        if (fieldVal(fields, "range")) |r| {
+            lo = r.range[0];
+            hi = r.range[1];
+        } else if (lo == hi) {
+            lo -= 0.5;
+            hi += 0.5;
+        }
+        const nf: f64 = @floatFromInt(vals.items.len);
+        const auto_bins = @ceil(@log2(nf) + 1); // Sturges
+        const bins: usize = @intFromFloat(std.math.clamp(@round(if (fieldVal(fields, "bins")) |v| v.num else auto_bins), 1, 200));
+        const counts = try p.arena.alloc(f64, bins);
+        @memset(counts, 0);
+        const bw = (hi - lo) / @as(f64, @floatFromInt(bins));
+        var outside: usize = 0;
+        for (vals.items) |v| {
+            if (v < lo or v > hi) {
+                outside += 1;
+                continue;
+            }
+            const k: usize = @min(bins - 1, @as(usize, @intFromFloat(@floor((v - lo) / bw))));
+            counts[k] += 1;
+        }
+        if (outside > 0) try p.warn("hist: {d} of {d} values fall outside the range {d}..{d}", .{ outside, vals.items.len, lo, hi });
+        const density = if (fieldVal(fields, "density")) |v| v.boolean else false;
+        try w.writeAll(",\"bars\":[");
+        for (counts, 0..) |c, k| {
+            if (k > 0) try w.writeByte(',');
+            try w.writeByte('[');
+            try writeFixed(w, lo + (@as(f64, @floatFromInt(k)) + 0.5) * bw, 8);
+            try w.writeAll(",[");
+            try writeFixed(w, if (density) c / (nf * bw) else c, 6);
+            try w.writeAll("]]");
+            try pins.add("B{d}", .{k + 1});
+        }
+        try w.writeAll("],\"bw\":");
+        try writeFixed(w, bw, 8);
     }
 
     fn exprFail(p: *LineParser, e: expr.Error, src: []const u8, ep: *expr.Parser) Error {
@@ -1081,6 +1484,11 @@ const LineParser = struct {
                 h = fd.val.vec[1];
             };
             x0 = at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "nn") or std.mem.eql(u8, op, "grid") or std.mem.eql(u8, op, "bits")) {
+            const sz = diagramSize(op, fields) orelse return null;
+            w = sz[0];
+            h = sz[1];
+            x0 = at[0] - w / 2;
         } else if (std.mem.eql(u8, op, "wave")) {
             const step = num.get(fields, "step") orelse 0.5;
             const rh = num.get(fields, "size") orelse 0.45;
@@ -1194,6 +1602,160 @@ pub fn wavePin(a: Allocator, name: []const u8) Allocator.Error![]const u8 {
 
 /// Stands in for a `<<TAG` block among the positional tokens (compared by address).
 const heredoc_marker: []const u8 = "<<heredoc>>";
+
+/// One contour level of a grid of samples (marching squares), written as a JSON
+/// array of polylines in data coordinates. Segments are chained through the
+/// cell edges they share, so each curve comes out as one polyline.
+fn contourLevel(arena: Allocator, w: *Writer, zs: []const f64, n: usize, xr: [2]f64, yr: [2]f64, lv: f64, dec: [2]u8) (Writer.Error || Allocator.Error)!void {
+    const H = n * (n + 1); // horizontal edges: (i,j)-(i+1,j), id j*n+i
+    const E = H + (n + 1) * n; // vertical edges: (i,j)-(i,j+1), id H + j*(n+1)+i
+    const none = std.math.maxInt(u32);
+    const Seg = struct { a: u32, b: u32 };
+    var segs: std.ArrayList(Seg) = .empty;
+    const z = struct {
+        fn at(v: []const f64, nn: usize, i: usize, j: usize) f64 {
+            return v[j * (nn + 1) + i];
+        }
+    }.at;
+    for (0..n) |j| for (0..n) |i| {
+        const bl = z(zs, n, i, j);
+        const br = z(zs, n, i + 1, j);
+        const tr = z(zs, n, i + 1, j + 1);
+        const tl = z(zs, n, i, j + 1);
+        if (!(std.math.isFinite(bl) and std.math.isFinite(br) and std.math.isFinite(tr) and std.math.isFinite(tl))) continue;
+        const bottom: u32 = @intCast(j * n + i);
+        const top: u32 = @intCast((j + 1) * n + i);
+        const left: u32 = @intCast(H + j * (n + 1) + i);
+        const right: u32 = left + 1;
+        var c: u4 = 0;
+        if (bl >= lv) c |= 1;
+        if (br >= lv) c |= 2;
+        if (tr >= lv) c |= 4;
+        if (tl >= lv) c |= 8;
+        const centre_up = (bl + br + tr + tl) / 4 >= lv;
+        const pairs: []const [2]u32 = switch (c) {
+            0, 15 => &.{},
+            1, 14 => &.{.{ left, bottom }},
+            2, 13 => &.{.{ bottom, right }},
+            3, 12 => &.{.{ left, right }},
+            4, 11 => &.{.{ right, top }},
+            6, 9 => &.{.{ bottom, top }},
+            7, 8 => &.{.{ left, top }},
+            5 => if (centre_up) &.{ .{ bottom, right }, .{ left, top } } else &.{ .{ left, bottom }, .{ right, top } },
+            10 => if (centre_up) &.{ .{ left, bottom }, .{ right, top } } else &.{ .{ bottom, right }, .{ left, top } },
+        };
+        for (pairs) |pr| try segs.append(arena, .{ .a = pr[0], .b = pr[1] });
+    };
+    // Each edge is shared by at most two segments.
+    const link = try arena.alloc([2]u32, E);
+    @memset(link, .{ none, none });
+    for (segs.items, 0..) |sg, k| for ([_]u32{ sg.a, sg.b }) |e| {
+        if (link[e][0] == none) link[e][0] = @intCast(k) else link[e][1] = @intCast(k);
+    };
+    const seen = try arena.alloc(bool, segs.items.len);
+    @memset(seen, false);
+    const pt = struct {
+        fn of(v: []const f64, nn: usize, hh: usize, x: [2]f64, y: [2]f64, l: f64, e: u32) [2]f64 {
+            var i_a: usize = undefined;
+            var j_a: usize = undefined;
+            var i_b: usize = undefined;
+            var j_b: usize = undefined;
+            if (e < hh) {
+                j_a = e / nn;
+                i_a = e % nn;
+                i_b = i_a + 1;
+                j_b = j_a;
+            } else {
+                const k = e - hh;
+                j_a = k / (nn + 1);
+                i_a = k % (nn + 1);
+                i_b = i_a;
+                j_b = j_a + 1;
+            }
+            const va = v[j_a * (nn + 1) + i_a];
+            const vb = v[j_b * (nn + 1) + i_b];
+            const t = if (vb != va) std.math.clamp((l - va) / (vb - va), 0, 1) else 0.5;
+            const fi = @as(f64, @floatFromInt(i_a)) + t * @as(f64, @floatFromInt(i_b - i_a));
+            const fj = @as(f64, @floatFromInt(j_a)) + t * @as(f64, @floatFromInt(j_b - j_a));
+            const nf: f64 = @floatFromInt(nn);
+            return .{ x[0] + (x[1] - x[0]) * fi / nf, y[0] + (y[1] - y[0]) * fj / nf };
+        }
+    }.of;
+    try w.writeByte('[');
+    var first_poly = true;
+    // Open curves first (start at an edge with one segment), then closed loops.
+    for (0..2) |pass| for (segs.items, 0..) |sg, k0| {
+        if (seen[k0]) continue;
+        var start = sg.a;
+        if (pass == 0) {
+            if (link[sg.a][1] == none) start = sg.a else if (link[sg.b][1] == none) start = sg.b else continue;
+        }
+        if (!first_poly) try w.writeByte(',');
+        first_poly = false;
+        try w.writeByte('[');
+        var at = start;
+        var cur: u32 = @intCast(k0);
+        var p0 = pt(zs, n, H, xr, yr, lv, at);
+        try w.writeByte('[');
+        try writeFixed(w, p0[0], dec[0]);
+        try w.writeByte(',');
+        try writeFixed(w, p0[1], dec[1]);
+        try w.writeByte(']');
+        while (true) {
+            seen[cur] = true;
+            const s = segs.items[cur];
+            const other = if (s.a == at) s.b else s.a;
+            p0 = pt(zs, n, H, xr, yr, lv, other);
+            try w.writeAll(",[");
+            try writeFixed(w, p0[0], dec[0]);
+            try w.writeByte(',');
+            try writeFixed(w, p0[1], dec[1]);
+            try w.writeByte(']');
+            const l = link[other];
+            const next = if (l[0] != cur and l[0] != none and !seen[l[0]]) l[0] else if (l[1] != cur and l[1] != none and !seen[l[1]]) l[1] else none;
+            if (next == none) break;
+            cur = next;
+            at = other;
+        }
+        try w.writeByte(']');
+    };
+    try w.writeByte(']');
+}
+
+/// Default extents of nn, grid and bits (as viewer/js/runtime.js draws them),
+/// including their labels. Null when the data doesn't parse (the line fails later).
+fn diagramSize(op: []const u8, fields: anytype) ?[2]f64 {
+    const given: ?Vec3 = if (fieldVal(fields, "size")) |v| switch (v) {
+        .vec => |x| x,
+        else => null,
+    } else null;
+    if (std.mem.eql(u8, op, "nn")) {
+        const layers = std.mem.count(u8, fieldStr(fields, "layers") orelse "", ",") + 1;
+        const lf: f64 = @floatFromInt(layers);
+        const s = given orelse Vec3{ @max(2, 2.6 * (lf - 1)), 4, 0 };
+        return .{ s[0] + 1.2, s[1] + 1.1 }; // neurons overhang; labels below
+    }
+    if (std.mem.eql(u8, op, "grid")) {
+        if (given) |s| return .{ s[0], s[1] };
+        const d = (fieldVal(fields, "dims") orelse return null).vec;
+        const cell = gridCell(d[0], d[1]);
+        return .{ d[1] * cell, d[0] * cell };
+    }
+    var n: f64 = 0;
+    for (fieldStr(fields, "pattern") orelse "") |c| if (c != '|' and c != ' ') {
+        n += 1;
+    };
+    const cell = if (fieldVal(fields, "size")) |v| v.num else bitsCell(n);
+    return .{ n * cell, cell * 3.4 };
+}
+/// Cell size of a grid without size=: at most 0.45, and the whole within 8x6.
+pub fn gridCell(rows: f64, cols: f64) f64 {
+    return @min(0.45, @min(8 / cols, 6 / rows));
+}
+/// Box size of a bits diagram without size=: at most 0.55, and the whole within 14.
+pub fn bitsCell(n: f64) f64 {
+    return @min(0.55, 14 / @max(n, 1));
+}
 
 fn fieldVal(fields: anytype, name: []const u8) ?Value {
     for (fields) |f| if (std.mem.eql(u8, f.name, name)) return f.val;
@@ -2180,4 +2742,110 @@ test "par blocks close at the end of a mixed-mode fence" {
     defer testing.allocator.free(got);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"b\",\"line\":5,\"par\":true") != null);
     try testing.expect(std.mem.indexOf(u8, got, "par block still open at the end of the ```vcl fence") != null);
+}
+
+test "charts and diagrams: data strings become arrays, pins and parts" {
+    try expectOut(
+        \\n: nn 0,0 "196,4" max=6 pairs=true
+        \\hl n.L0_196 n.L1_2e
+        \\color n.E1 red
+        \\fade n.L1_9 0.2
+        \\hl n
+        \\c: circle 5,3 0.5
+        \\color c.top red
+        \\g: grid 6,-3 2,2 "1 2 3 4"
+        \\grid 6,-3 2,2 "1 2 3"
+        \\set g text="4 3 2 1"
+        \\b: bits -5,-3 "s|ii|ff" labels="sign,int,frac" values="1|01|10"
+        \\hl b.int b.b0 b.F3
+        \\bits 0,0 "s|ii" values="1|0"
+    ,
+        \\{"op":"nn","id":"n","line":1,"par":false,"dur":1.2,"at":[0,0,0],"layers":"196,4","max":6,"pairs":true,"sizes":[196,4],"shown":[[1,2,195,196],[1,2,3,4]]}
+        \\{"op":"hl","line":2,"par":false,"dur":0.8,"ids":["n.L0_196","n.L1_2e"]}
+        \\{"op":"color","line":3,"par":false,"dur":0.4,"target":"n.E1","color":"#ef5350"}
+        \\{"op":"diag","level":"error","line":4,"msg":"fade: 'n' has no part 'L1_9' (did you mean 'L1_1'?)"}
+        \\{"op":"hl","line":5,"par":false,"dur":0.8,"ids":["n"]}
+        \\{"op":"circle","id":"c","line":6,"par":false,"dur":0.6,"at":[5,3,0],"r":0.5}
+        \\{"op":"diag","level":"error","line":7,"msg":"color: 'c' is a circle; only parts of nn, grid, bits, bars and hist can be targeted (name.part)"}
+        \\{"op":"grid","id":"g","line":8,"par":false,"dur":0.8,"at":[6,-3,0],"dims":[2,2,0],"values":"1 2 3 4","cells":[1,2,3,4]}
+        \\{"op":"diag","level":"error","line":9,"msg":"grid: 2x2 needs 4 values, got 3"}
+        \\{"op":"set","line":10,"par":false,"dur":0.5,"target":"g","text":"4 3 2 1"}
+        \\{"op":"bits","id":"b","line":11,"par":false,"dur":0.8,"at":[-5,-3,0],"pattern":"s|ii|ff","labels":"sign,int,frac","values":"1|01|10","widths":[1,2,2]}
+        \\{"op":"hl","line":12,"par":false,"dur":0.8,"ids":["b.int","b.b0","b.F3"]}
+        \\{"op":"diag","level":"error","line":13,"msg":"bits: values \"1|0\" must match the fields of \"s|ii\" (same | groups, one digit per bit)"}
+        \\
+    );
+    try expectOut(
+        \\ax: axes 0,0 x=0..4 y=0..5
+        \\b: bars ax "3 4,2/1" labels="a,b"
+        \\bars ax "1 2" labels="a"
+        \\h: hist ax "1 1 2 9" bins=2 range=0..4
+        \\scatter ax "1,2 3,4"
+        \\errbar ax "1,0.5..1.5 2,2,1.5..2.5"
+        \\errbar ax "1,2..1"
+        \\band ax
+        \\band ax y=1..2
+        \\hl b.B2 h.B1
+        \\del ax
+        \\hl b
+    ,
+        \\{"op":"axes","id":"ax","line":1,"par":false,"dur":1,"at":[0,0,0],"x":[0,4],"y":[0,5]}
+        \\{"op":"bars","id":"b","line":2,"par":false,"dur":0.8,"axes":"ax","data":"3 4,2/1","labels":"a,b","bars":[[1,[3]],[4,[2,1]]]}
+        \\{"op":"diag","level":"error","line":3,"msg":"bars: 1 labels for 2 bars"}
+        \\{"op":"diag","level":"warning","line":4,"msg":"hist: 1 of 4 values fall outside the range 0..4"}
+        \\{"op":"hist","id":"h","line":4,"par":false,"dur":0.8,"axes":"ax","data":"1 1 2 9","bins":2,"range":[0,4],"bars":[[1,[2]],[3,[1]]],"bw":2}
+        \\{"op":"scatter","id":"_1","line":5,"par":false,"dur":0.6,"axes":"ax","data":"1,2 3,4","pts":[[1,2,0],[3,4,0]]}
+        \\{"op":"errbar","id":"_2","line":6,"par":false,"dur":0.6,"axes":"ax","data":"1,0.5..1.5 2,2,1.5..2.5","bars":[[1,null,0.5,1.5],[2,2,1.5,2.5]]}
+        \\{"op":"diag","level":"error","line":7,"msg":"errbar: interval '2..1' must go from low to high"}
+        \\{"op":"diag","level":"error","line":8,"msg":"band: give x=lo..hi (a vertical strip), y=lo..hi (a horizontal one) or both"}
+        \\{"op":"band","id":"_3","line":9,"par":false,"dur":0.5,"axes":"ax","y":[1,2]}
+        \\{"op":"hl","line":10,"par":false,"dur":0.8,"ids":["b.B2","h.B1"]}
+        \\{"op":"del","line":11,"par":false,"dur":0.3,"ids":["ax"]}
+        \\{"op":"diag","level":"error","line":12,"msg":"hl: unknown name 'b'"}
+        \\
+    );
+}
+
+test "contour and step plots are sampled" {
+    var scene = Scene.init(testing.allocator);
+    defer scene.deinit();
+    var st = Stream.init(.vcl);
+    defer st.deinit(testing.allocator);
+    var aw: Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try st.feed(&scene,
+        \\ax: axes 0,0 x=-2..2 y=-2..2
+        \\contour ax "x^2+y^2" levels=1 res=8
+        \\plot ax "floor(x)" step=true x=-1..1
+        \\contour ax "1"
+        \\
+    , &aw.writer);
+    var lines = std.mem.splitScalar(u8, aw.written(), '\n');
+    _ = lines.next();
+    // One level halfway (z=4): a single closed loop (first point repeated at the end).
+    const c = lines.next().?;
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, c, .{});
+    defer parsed.deinit();
+    const levels = parsed.value.object.get("contours").?.array.items;
+    try testing.expectEqual(@as(usize, 1), levels.len);
+    try testing.expectEqual(@as(i64, 4), levels[0].object.get("z").?.integer);
+    const polys = levels[0].object.get("polys").?.array.items;
+    try testing.expectEqual(@as(usize, 1), polys.len);
+    const pts = polys[0].array.items;
+    try testing.expect(pts.len > 8);
+    const num = struct {
+        fn of(v: std.json.Value) f64 {
+            return switch (v) {
+                .integer => |i| @floatFromInt(i),
+                .float => |f| f,
+                else => std.math.nan(f64),
+            };
+        }
+    }.of;
+    for (0..2) |k| try testing.expectEqual(num(pts[0].array.items[k]), num(pts[pts.len - 1].array.items[k]));
+    // floor(x) on -1..1: flat at -1, a riser at 0, flat at 0, the jump to 1 at the end (corners only).
+    try testing.expect(std.mem.indexOf(u8, lines.next().?, "\"polys\":[[[-1,-1,0],[0,-1,0],[0,0,0],[1,0,0],[1,1,0]]]") != null);
+    try testing.expectEqualStrings(
+        \\{"op":"diag","level":"error","line":4,"msg":"contour: \"1\" is constant or undefined over this range: no levels to draw"}
+    , lines.next().?);
 }

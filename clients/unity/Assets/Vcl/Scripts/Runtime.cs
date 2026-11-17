@@ -257,8 +257,12 @@ namespace Vcl
 
         public Entity Get(string id)
         {
-            if (id == null || !Entities.TryGetValue(id, out var e)) throw new Exception($"unknown name '{id}'");
-            return e;
+            if (id != null && Entities.TryGetValue(id, out var e)) return e;
+            // A diagram part (hl n.L1_3, color g.r2c3): this client draws those ops as
+            // placeholders, so the change applies to the whole entity.
+            var dot = id?.IndexOf('.') ?? -1;
+            if (dot > 0 && Entities.TryGetValue(id.Substring(0, dot), out e)) return e;
+            throw new Exception($"unknown name '{id}'");
         }
 
         public void Remove(string id)
@@ -426,6 +430,7 @@ namespace Vcl
         {
             "pt", "line", "arrow", "path", "poly", "rect", "circle", "angle", "text", "tex", "node", "edge", "img",
             "axes", "plot", "surf", "box", "sphere", "cyl", "model", "svg", "part", "wire", "block", "frame", "code", "table", "wave",
+            "nn", "grid", "bits", "bars", "hist", "scatter", "errbar", "band", "contour",
         };
 
         Task Handle(Cmd c)

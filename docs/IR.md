@@ -109,9 +109,49 @@ coordinates:
 Map them through the axes like any `on=` data point. Numbers are rounded to
 about 1/20000 of the axis range.
 
+`contour` adds `contours`: `[{"z":level,"polys":[[[x,y], …], …]}, …]`, one
+entry per level from low to high; each curve is one polyline (a closed loop
+repeats its first point at the end). `plot … step=true` comes as `polys` that
+already have their flat runs and vertical risers.
+
+## Parsed data
+
+The data strings of charts and diagrams are parsed by the parser too (a bad
+value is a parse error). The source string stays; these fields are added:
+
+| Op | Field | Meaning |
+|---|---|---|
+| `bars` | `bars` | `[[x, [y1, y2, …]], …]`: one entry per bar; several ys stack from the baseline (0, or the nearest end of the y range) |
+| `hist` | `bars`, `bw` | bins as bars (`[[centre, [count]], …]`, or densities with `density`), and the bin width |
+| `scatter` | `pts` | `[[x,y,z], …]` |
+| `errbar` | `bars` | `[[x, y or null, lo, hi], …]`; with `horiz`, x is the row's y and the interval runs along x |
+| `nn` | `sizes`, `shown` | neurons per layer, and per layer the 1-based neurons drawn (a big layer: its first and last few, with an ellipsis between) |
+| `grid` | `cells` | rows×cols numbers, row-major from the top-left |
+| `bits` | `widths` | bits per field (`pattern` split at `\|`), most significant first |
+
+`band` has no data: its `x`/`y` ranges (either may be missing: the whole axis).
+
+## Parts
+
+`hl`, `color` and `fade` may target one part of a diagram instead of a whole
+entity: `"ids":["n.L1_3"]`, `"target":"g.r2c3"`. The parser only allows the
+parts listed below (they are the same names as the pins). A renderer recolours
+or dims only that part; `hl` pulses its colour (and the WebXR viewer swells
+neurons and bit boxes).
+
+| Op | Parts (and pins) |
+|---|---|
+| `nn` | `L0`… whole layers (also `L0_top`, `L0_bottom` as pins above and below), `L1_3` neuron 3 of layer 1, `L1_3e` its error node (`pairs`), `E1`… the edges into layer 1, `F1`… feedback edges from layer 1 (`feedback`) |
+| `grid` | `r2` row, `c3` column, `r2c3` cell (1-based; cells only up to 4096 of them) |
+| `bits` | `b0`… single bits (b0 the least significant), `F1`… fields, and each field's label as a name (`sign`, `integer`) |
+| `bars`, `hist` | `B1`… bars (pins at their tops) |
+
+`scatter` has pins `P1`… at its points and `errbar` `E1`… at its intervals'
+centres, but no parts.
+
 ## Pins
 
-Parts, blocks, code, tables and timing diagrams expose named pins. The parser
+Parts, blocks, code, tables, timing diagrams and the diagrams above expose named pins. The parser
 has already checked that a referenced pin exists; the renderer must provide
 its position (and, for wires, its outward direction). Part pin positions are
 defined in `viewer/js/parts.js`, whose names must match `part_pins` in

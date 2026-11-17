@@ -12,6 +12,10 @@
     "title": "RC low-pass filter (schematic + plot)"
   },
   {
+    "file": "charts.vcl",
+    "title": "Charts and diagrams (network, heatmap, bits, bars, contour)"
+  },
+  {
     "file": "datapath.vcl",
     "title": "CPU datapath (hierarchical blocks)"
   },

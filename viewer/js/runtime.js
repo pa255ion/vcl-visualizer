@@ -14,16 +14,17 @@ import { Timeline } from './timeline.js';
 import { compile } from './expr.js';
 import { TextPlane } from './text.js';
 import * as D from './draw.js';
+import { addCharts } from './charts.js';
 
 export const FG = '#e8edf3';
 const PALETTE = ['#42a5f5', '#ffa726', '#66bb6a', '#f06292', '#ab47bc', '#26a69a', '#ffee58'];
 const DEFAULT_FX = {
   pt: 'pop', text: 'fade', tex: 'fade', title: 'fade', node: 'pop', img: 'fade', svg: 'fade',
-  code: 'fade', table: 'fade',
+  code: 'fade', table: 'fade', grid: 'fade', bits: 'fade', band: 'fade',
   box: 'grow', sphere: 'grow', cyl: 'grow', model: 'grow',
 };
 const DRAWABLE = new Set(['line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'edge', 'axes', 'plot', 'surf',
-  'part', 'wire', 'block', 'frame', 'wave']);
+  'part', 'wire', 'block', 'frame', 'wave', 'nn', 'bars', 'hist', 'scatter', 'errbar', 'contour']);
 
 const V = (a) => new THREE.Vector3(a[0], a[1], a[2] ?? 0);
 const isRef = (p) => p && !Array.isArray(p) && typeof p === 'object';
@@ -72,7 +73,8 @@ class Entity {
   own(d) { this.disposables.push(d); return d; }
 
   applyOpacity() {
-    for (const m of this.mats) m.opacity = m.userData.base * this.opacity * (this.factor[m.userData.role] ?? 1);
+    // `dim`: a part faded on its own (fade n.L1 0.2).
+    for (const m of this.mats) m.opacity = m.userData.base * this.opacity * (this.factor[m.userData.role] ?? 1) * (m.userData.dim ?? 1);
     this.obj.visible = this.opacity > 0.002;
   }
   setOpacity(o) { this.opacity = o; this.applyOpacity(); }
@@ -211,6 +213,22 @@ export class Runtime {
     const e = this.entities.get(id);
     if (!e) throw new Error(`unknown name '${id}'`);
     return e;
+  }
+
+  /**
+   * What a change op acts on: an entity, or one part of a diagram ('n.L1_3',
+   * 'g.r2c3'): { e, mats (each with .color), objs (scaled by hl), apply() }.
+   */
+  target(id) {
+    const dot = id.indexOf('.');
+    if (dot < 0) {
+      const e = this.get(id);
+      return { e, mats: e.colorMats(), objs: [e.obj], whole: true };
+    }
+    const e = this.get(id.slice(0, dot)), name = id.slice(dot + 1);
+    const part = e.parts?.[name];
+    if (!part) throw new Error(`'${e.id}' has no part '${name}'`);
+    return { e, objs: [], ...part };
   }
 
   remove(id) {
@@ -404,18 +422,32 @@ H.scale = function (c) {
   });
 };
 H.fade = function (c) {
+  if (c.target.includes('.')) { // one part: its own dimming factor
+    let t, from;
+    return {
+      begin: () => { t = this.target(c.target); from = t.mats.map((m) => m.userData?.dim ?? 1); },
+      update: (p) => {
+        t.mats.forEach((m, i) => { m.userData ??= {}; m.userData.dim = from[i] + (c.opacity - from[i]) * p; });
+        t.e.applyOpacity();
+        t.apply?.();
+      },
+    };
+  }
   return this.change(c, (e) => {
     const from = e.opacity;
     return (p) => e.setOpacity(from + (c.opacity - from) * p);
   });
 };
-function colorTween(e, target) {
-  const mats = e.colorMats();
+function colorTween(t, target) {
+  const { mats } = t;
   const from = mats.map((m) => m.color.clone());
   const to = new THREE.Color(target);
-  return (p) => mats.forEach((m, i) => m.color.lerpColors(from[i], to, p));
+  return (p) => { mats.forEach((m, i) => m.color.lerpColors(from[i], to, p)); t.apply?.(); };
 }
-H.color = function (c) { return this.change(c, (e) => colorTween(e, c.color)); };
+H.color = function (c) {
+  let u;
+  return { begin: () => { u = colorTween(this.target(c.target), c.color); }, update: (p) => u?.(p) };
+};
 H.set = function (c) {
   return this.change(c, (e) => {
     const parts = [];
@@ -435,15 +467,16 @@ H.hl = function (c) {
   return {
     begin: () => {
       us = c.ids.map((id) => {
-        const e = this.get(id);
-        const mats = e.colorMats();
-        const from = mats.map((m) => m.color.clone());
+        const t = this.target(id);
+        const from = t.mats.map((m) => m.color.clone());
         const hl = new THREE.Color(c.color ?? '#ffe066');
-        const s0 = e.obj.scale.x;
+        const s0 = t.objs.map((o) => o.scale.x);
+        const grow = t.whole ? 0.12 : 0.3;
         return (raw) => {
           const k = Math.sin(Math.PI * raw);
-          mats.forEach((m, i) => m.color.lerpColors(from[i], hl, k * 0.85));
-          e.obj.scale.setScalar(s0 * (1 + 0.12 * k));
+          t.mats.forEach((m, i) => m.color.lerpColors(from[i], hl, k * 0.85));
+          t.objs.forEach((o, i) => o.scale.setScalar(s0[i] * (1 + grow * k)));
+          t.apply?.();
         };
       });
     },
@@ -459,7 +492,8 @@ H.spin = function (c) {
 };
 
 for (const op of ['pt', 'line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'text', 'tex', 'node', 'edge', 'img',
-  'axes', 'plot', 'surf', 'box', 'sphere', 'cyl', 'model', 'svg', 'part', 'wire', 'block', 'frame', 'code', 'table', 'wave'])
+  'axes', 'plot', 'surf', 'box', 'sphere', 'cyl', 'model', 'svg', 'part', 'wire', 'block', 'frame', 'code', 'table', 'wave',
+  'nn', 'grid', 'bits', 'bars', 'hist', 'scatter', 'errbar', 'band', 'contour'])
   H[op] = function (c) { return this.create(c); };
 
 // ───────────────────────────── builders ─────────────────────────────
@@ -881,20 +915,22 @@ BUILD.axes = function (e, c) {
     if (is3) e.billboards.push(tp.mesh);
   };
   const showTicks = c.ticks ?? true, showGrid = c.grid ?? true;
+  const showXTicks = c.xticks ?? showTicks; // off for category labels (bars … labels=)
+  const showYTicks = c.yticks ?? showTicks; // off for rows (a forest plot)
   const each = (r, f) => {
     const st = D.niceStep(r[1] - r[0]);
     for (let v = Math.ceil(r[0] / st - 1e-9) * st; v <= r[1] + 1e-9; v += st) f(v);
   };
   each(xr, (v) => {
     if (showGrid) grid.push(is3 ? [P(v, yr[0]), P(v, yr[1])] : [P(v, yr[0]), P(v, yr[1])]);
-    if (!showTicks || Math.abs(v - o.x) < 1e-9) return;
+    if (!showXTicks || Math.abs(v - o.x) < 1e-9) return;
     const p = P(v, o.y);
     ticks.push([p.clone().add(new THREE.Vector3(0, -tl, 0)), p.clone().add(new THREE.Vector3(0, tl, 0))]);
     label(D.fmtTick(v), p.clone().add(new THREE.Vector3(0, -0.32, 0)));
   });
   each(yr, (v) => {
     if (showGrid) grid.push([P(xr[0], v), P(xr[1], v)]);
-    if (!showTicks || Math.abs(v - o.y) < 1e-9) return;
+    if (!showYTicks || Math.abs(v - o.y) < 1e-9) return;
     const p = P(o.x, v);
     ticks.push(is3 ? [p.clone().add(new THREE.Vector3(-tl, 0, 0)), p.clone().add(new THREE.Vector3(tl, 0, 0))]
       : [p.clone().add(new THREE.Vector3(-tl, 0, 0)), p.clone().add(new THREE.Vector3(tl, 0, 0))]);
@@ -1387,3 +1423,5 @@ BUILD.svg = function (e, c) {
     }
   })().catch((err) => e.rt.log('warning', `line ${c.line}: svg: ${err.message}`));
 };
+
+addCharts(BUILD, { FG, PALETTE, axesOf, labelFor });
