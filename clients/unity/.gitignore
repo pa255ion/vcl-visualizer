@@ -1,0 +1,19 @@
+# Unity-generated
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/MemoryCaptures/
+*.csproj
+*.sln
+*.apk
+*.aab
+.vs/
+.idea/
+
+# Unpacked by VclBuild.Setup from the TextMesh Pro package
+/Assets/TextMesh Pro/
+/Assets/TextMesh Pro.meta

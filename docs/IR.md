@@ -134,9 +134,10 @@ data coordinates; on 3D axes, data (x, y, z) maps to board (x, z-up, −y).
 
 ## Notes for a Unity / VRChat client
 
-* A Unity client can use the WebSocket directly (e.g. NativeWebSocket) and
-  mirror `runtime.js`: an entity registry, the scheduler above, and one
-  builder per op.
+* `clients/unity` is one: it uses the WebSocket directly
+  (`System.Net.WebSockets`) and mirrors `runtime.js` with an entity registry,
+  the scheduler above and one builder per op. Unity's z axis points away from
+  the viewer, so it flips IR z (and mirrors rotations) at the boundary.
 * VRChat worlds can't open sockets. Udon can only fetch strings
   (`VRCStringDownloader`), about once every 5 seconds, from allow-listed hosts.
   So VRChat would poll `GET /scene` (plus a cursor parameter to add) rather

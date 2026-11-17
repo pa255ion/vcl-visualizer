@@ -5,13 +5,14 @@ A compact, streamable **visual communication language** (VCL) that a teacher
 board in VR/AR, next to a teacher avatar, in real time.
 
 ```
-LLM reply ──text chunks──▶ vcl serve (Zig) ──JSON IR over WebSocket──▶ viewers (WebXR / later Unity)
+LLM reply ──text chunks──▶ vcl serve (Zig) ──JSON IR over WebSocket──▶ viewers (WebXR, Unity/Quest)
    prose + ```vcl fences        parse · validate · diagnostics             schedule · animate · render
                                 └──── diagnostics back to the producer (to feed to the model)
 ```
 
 * **Language:** [docs/SPEC.md](docs/SPEC.md). For a system prompt: [docs/PRIMER.md](docs/PRIMER.md).
-* **Renderer contract** (for new front ends such as Unity): [docs/IR.md](docs/IR.md).
+* **Renderer contract** (for new front ends): [docs/IR.md](docs/IR.md).
+* **Unity client** (a native Quest app, same stream): [clients/unity/README.md](clients/unity/README.md).
 
 ## What it can show
 
@@ -163,9 +164,10 @@ core/src/wasm.zig    browser build of the parser → viewer/vcl.wasm
 viewer/              static WebXR viewer (three.js from CDN, no build step)
   js/runtime.js        IR → three.js entities (one builder per op)
   js/timeline.js       scheduler (reference for other renderers)
-  js/expr.js           safe expression compiler for plot/surf
+  js/expr.js           expression compiler (fallback; the parser samples plot/surf)
   js/avatar.js         teacher stand-in + subtitles
   lessons/             example lessons (.vcl, and .md for mixed prose)
+clients/unity/       Unity 2022.3 client: a native Quest app (C# port of the viewer runtime)
 tools/stream.mjs     simulate an LLM streaming into the server
 docs/                SPEC, IR, PRIMER
 ```
@@ -183,7 +185,9 @@ node --test viewer/test/*.test.mjs    # expression compiler, scheduler
 * Lip-sync from tts-lab's phone timings (currently loudness only), and running
   synthesis in a worker for long bursts of speech.
 * A rigged avatar, interacting with entities in VR (grab or ask about a thing),
-  `morph` between shapes, tables, a binary wire format, and the Unity client.
+  `morph` between shapes, and a binary wire format.
+* The Unity client covers the core ops but not yet images, SVG, models,
+  circuits, blocks, code, tables or timing diagrams (see its README).
 
 ## Credits
 
