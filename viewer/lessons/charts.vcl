@@ -25,6 +25,7 @@ END
 & text 5,-2 "the input: 14×14" size=0.35
 point g
 say "The input is this picture, one pixel per input unit."
+# 1 sign + 4 integer + 7 fraction bits: Q4.7 if m excludes the sign (TI), Q5.7 if it counts it.
 b: bits -1,-3.6 "s|iiii|fffffff" labels="sign,integer,fraction" values="0|0011|0100000" size=0.42
 say "On the chip, every weight is a twelve bit fixed point number."
 hl b.fraction
