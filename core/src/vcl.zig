@@ -13,6 +13,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
+const expr = @import("expr.zig");
+
+test {
+    _ = expr;
+}
 
 pub const version = "0.1";
 
@@ -205,6 +210,8 @@ const Entity = struct {
     /// Estimated board-space extent (x0, y0, x1, y1) of text, panels, blocks,
     /// waves and nodes placed at board coordinates; null when unknown or moved.
     box: ?[4]f64 = null,
+    /// For axes: their data ranges (plots are sampled against them).
+    axes: ?AxesRanges = null,
 
     fn hasPort(e: Entity, name: []const u8) bool {
         var it = std.mem.splitScalar(u8, e.ports, ',');
@@ -212,6 +219,8 @@ const Entity = struct {
         return false;
     }
 };
+
+const AxesRanges = struct { is3: bool, x: [2]f64, y: [2]f64, z: [2]f64 };
 
 /// Names that currently exist. Shared by every producer feeding one scene.
 pub const Scene = struct {
@@ -223,6 +232,9 @@ pub const Scene = struct {
     board: Vec3 = default_board,
     /// Set by `Stream` for the lines of a `par` … `end` block after the first.
     force_par: bool = false,
+    /// Sample `plot` and `surf` into points (IR fields `polys` and `zgrid`).
+    /// Off only in tests that check the rest of the output.
+    sample: bool = true,
 
     pub fn init(gpa: Allocator) Scene {
         return .{ .gpa = gpa };
@@ -541,6 +553,9 @@ const LineParser = struct {
             p.scene.board = b;
         }
         const box: ?[4]f64 = if (on == null) try p.lintBounds(fields.items) else null;
+        var samples: ?[]const u8 = null;
+        if (std.mem.eql(u8, op.name, "plot") or std.mem.eql(u8, op.name, "surf"))
+            samples = try p.sample(fields.items);
         if (std.mem.eql(u8, op.name, "group")) {
             for (fields.items[0].val.list) |v| if (std.mem.eql(u8, v.id, name.?))
                 return p.fail("group: '{s}' can't contain itself", .{v.id});
@@ -638,6 +653,7 @@ const LineParser = struct {
             }
             if (box) |b| try p.lintOverlap(i, b);
             try p.scene.add(i, op.name, on, ports);
+            if (std.mem.eql(u8, op.name, "axes")) p.scene.names.getPtr(i).?.axes = axesRanges(fields.items);
             if (box) |b| p.scene.names.getPtr(i).?.box = b;
             if (std.mem.eql(u8, op.name, "group"))
                 for (fields.items[0].val.list) |v| {
@@ -662,6 +678,7 @@ const LineParser = struct {
             try o.writeAll(":");
             try writeValue(o, f.val);
         }
+        if (samples) |sm| if (p.scene.sample) try o.writeAll(sm);
         try o.writeAll("}\n");
     }
 
@@ -778,6 +795,146 @@ const LineParser = struct {
     /// Warn when a block is too small for its title and port names (the
     /// renderer can't move things the model placed, so say so up front).
     /// Estimates: title glyphs ~0.23 wide, port names ~0.15, as the viewer draws them.
+    /// Evaluate a `plot`/`surf` and return its sample fields as a JSON fragment
+    /// (",\"polys\":…" or ",\"zgrid\":…"), in the axes' data coordinates.
+    /// Mirrors what viewer/js/runtime.js used to sample client-side.
+    fn sample(p: *LineParser, fields: anytype) Error![]const u8 {
+        const op = p.op.name;
+        const ax_name = fieldVal(fields, "axes").?.id;
+        const A = (p.scene.names.get(ax_name) orelse return p.fail("{s}: unknown name '{s}'", .{ op, ax_name })).axes orelse
+            return p.fail("{s}: '{s}' is not axes", .{ op, ax_name });
+        var ep: expr.Parser = .{ .arena = p.arena };
+        var buf: std.Io.Writer.Allocating = .init(p.arena);
+        const w = &buf.writer;
+        const decimals = struct {
+            fn of(r: [2]f64) u8 {
+                const q = @abs(r[1] - r[0]) / 20000;
+                if (!(q > 0)) return 4;
+                return @intFromFloat(std.math.clamp(@ceil(-@log10(q)), 0, 8));
+            }
+        };
+        const dx = decimals.of(A.x);
+        const dy = decimals.of(A.y);
+        const dz = decimals.of(if (A.is3) A.z else A.y);
+
+        if (std.mem.eql(u8, op, "surf")) {
+            if (!A.is3) return p.fail("surf: needs 3D axes (give '{s}' a z=range)", .{ax_name});
+            const src = fieldVal(fields, "expr").?.str;
+            const f = expr.compile(&ep, src, "xy") catch |e| return p.exprFail(e, src, &ep);
+            const xr = if (fieldVal(fields, "x")) |v| v.range else A.x;
+            const yr = if (fieldVal(fields, "y")) |v| v.range else A.y;
+            const res = if (fieldVal(fields, "res")) |v| v.num else 56;
+            const n: usize = @intFromFloat(std.math.clamp(@floor(res + 0.5), 4, 160));
+            const nf: f64 = @floatFromInt(n);
+            w.print(",\"zgrid\":{{\"n\":{d},\"z\":[", .{n}) catch return error.OutOfMemory;
+            for (0..n + 1) |j| for (0..n + 1) |i| {
+                const x = xr[0] + (xr[1] - xr[0]) * @as(f64, @floatFromInt(i)) / nf;
+                const y = yr[0] + (yr[1] - yr[0]) * @as(f64, @floatFromInt(j)) / nf;
+                const z = f.eval(.{ .x = x, .y = y });
+                if (i + j > 0) w.writeByte(',') catch return error.OutOfMemory;
+                writeFixed(w, if (std.math.isFinite(z)) std.math.clamp(z, A.z[0], A.z[1]) else 0, dz) catch return error.OutOfMemory;
+            };
+            w.writeAll("]}") catch return error.OutOfMemory;
+            return buf.written();
+        }
+
+        const srcs = fieldVal(fields, "exprs").?.list;
+        var fns: [3]expr.Expr = undefined;
+        for (srcs, 0..) |v, k| fns[k] = expr.compile(&ep, v.str, "xt") catch |e| return p.exprFail(e, v.str, &ep);
+        var polys: usize = 0;
+        var cur: usize = 0; // points in the current polyline
+        w.writeAll(",\"polys\":[") catch return error.OutOfMemory;
+        const S = struct {
+            fn brk(wr: *Writer, n_polys: *usize, n_cur: *usize) !void {
+                if (n_cur.* > 0) {
+                    try wr.writeAll("]");
+                    n_polys.* += 1;
+                }
+                n_cur.* = 0;
+            }
+            fn push(wr: *Writer, n_polys: usize, n_cur: *usize, v: Vec3, d: [3]u8) !void {
+                if (n_cur.* == 0) try wr.writeAll(if (n_polys > 0) ",[" else "[");
+                if (n_cur.* > 0) try wr.writeAll(",");
+                try wr.writeAll("[");
+                try writeFixed(wr, v[0], d[0]);
+                try wr.writeAll(",");
+                try writeFixed(wr, v[1], d[1]);
+                try wr.writeAll(",");
+                try writeFixed(wr, v[2], d[2]);
+                try wr.writeAll("]");
+                n_cur.* += 1;
+            }
+        };
+        const d3: [3]u8 = .{ dx, dy, dz };
+        // A one-point polyline draws nothing: drop it (the writer can't unwrite,
+        // so points are buffered until a second one arrives).
+        var pending: ?Vec3 = null;
+        const step = struct {
+            fn ok(wr: *Writer, n_polys: *usize, n_cur: *usize, pend: *?Vec3, v: Vec3, d: [3]u8) !void {
+                if (n_cur.* == 0) {
+                    if (pend.*) |first| {
+                        try S.push(wr, n_polys.*, n_cur, first, d);
+                        pend.* = null;
+                    } else {
+                        pend.* = v;
+                        return;
+                    }
+                }
+                try S.push(wr, n_polys.*, n_cur, v, d);
+            }
+            fn brk(wr: *Writer, n_polys: *usize, n_cur: *usize, pend: *?Vec3) !void {
+                pend.* = null;
+                try S.brk(wr, n_polys, n_cur);
+            }
+        };
+        if (srcs.len == 1) {
+            const xr = if (fieldVal(fields, "x")) |v| v.range else A.x;
+            const yspan = A.y[1] - A.y[0];
+            const N = 600;
+            var prev: ?f64 = null;
+            for (0..N + 1) |i| {
+                const x = xr[0] + (xr[1] - xr[0]) * @as(f64, @floatFromInt(i)) / N;
+                const y = fns[0].eval(.{ .x = x, .t = x });
+                const in = std.math.isFinite(y) and (A.is3 or (y >= A.y[0] - 0.05 * yspan and y <= A.y[1] + 0.05 * yspan));
+                if (!in or (prev != null and !A.is3 and @abs(y - prev.?) > yspan))
+                    step.brk(w, &polys, &cur, &pending) catch return error.OutOfMemory;
+                if (in) step.ok(w, &polys, &cur, &pending, .{ x, y, 0 }, d3) catch return error.OutOfMemory;
+                prev = if (in) y else null;
+            }
+        } else {
+            const tr = if (fieldVal(fields, "t")) |v| v.range else [2]f64{ 0, 2 * std.math.pi };
+            const N = 800;
+            for (0..N + 1) |i| {
+                const t = tr[0] + (tr[1] - tr[0]) * @as(f64, @floatFromInt(i)) / N;
+                var v: Vec3 = .{ 0, 0, 0 };
+                var finite = true;
+                for (srcs, 0..) |_, k| {
+                    v[k] = fns[k].eval(.{ .x = t, .t = t });
+                    finite = finite and std.math.isFinite(v[k]);
+                }
+                if (!finite) {
+                    step.brk(w, &polys, &cur, &pending) catch return error.OutOfMemory;
+                    continue;
+                }
+                step.ok(w, &polys, &cur, &pending, v, d3) catch return error.OutOfMemory;
+            }
+        }
+        step.brk(w, &polys, &cur, &pending) catch return error.OutOfMemory;
+        w.writeAll("]") catch return error.OutOfMemory;
+        if (polys == 0) {
+            if (srcs.len == 1) return p.fail("plot: nothing to draw: \"{s}\" has no values inside the axes' y range {d}..{d} for x in this range", .{ srcs[0].str, A.y[0], A.y[1] });
+            return p.fail("plot: nothing to draw: the curve has no finite points for t in this range", .{});
+        }
+        return buf.written();
+    }
+
+    fn exprFail(p: *LineParser, e: expr.Error, src: []const u8, ep: *expr.Parser) Error {
+        return switch (e) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.Bad => p.fail("{s}: \"{s}\": {s}", .{ p.op.name, src, ep.msg }),
+        };
+    }
+
     fn lintBlock(p: *LineParser, fields: anytype) Error!void {
         var w: f64 = 0;
         var h: f64 = 0;
@@ -1037,6 +1194,39 @@ pub fn wavePin(a: Allocator, name: []const u8) Allocator.Error![]const u8 {
 
 /// Stands in for a `<<TAG` block among the positional tokens (compared by address).
 const heredoc_marker: []const u8 = "<<heredoc>>";
+
+fn fieldVal(fields: anytype, name: []const u8) ?Value {
+    for (fields) |f| if (std.mem.eql(u8, f.name, name)) return f.val;
+    return null;
+}
+
+/// The data ranges of an `axes` command (defaults as in the viewer).
+fn axesRanges(fields: anytype) AxesRanges {
+    const z = fieldVal(fields, "z");
+    const is3 = z != null;
+    return .{
+        .is3 = is3,
+        .x = if (fieldVal(fields, "x")) |v| v.range else .{ -5, 5 },
+        .y = if (fieldVal(fields, "y")) |v| v.range else if (is3) .{ -5, 5 } else .{ -3, 3 },
+        .z = if (z) |v| v.range else .{ 0, 0 },
+    };
+}
+
+/// `v` with at most `decimals` digits after the point, trailing zeros dropped.
+fn writeFixed(w: *Writer, v: f64, decimals: u8) Writer.Error!void {
+    var b: [64]u8 = undefined;
+    const s = switch (decimals) {
+        inline 0...8 => |d| std.fmt.bufPrint(&b, std.fmt.comptimePrint("{{d:.{d}}}", .{d}), .{v}) catch return writeNum(w, v),
+        else => unreachable,
+    };
+    var t: []const u8 = s;
+    if (std.mem.indexOfScalar(u8, t, '.') != null) {
+        t = std.mem.trimEnd(u8, t, "0");
+        t = std.mem.trimEnd(u8, t, ".");
+    }
+    if (std.mem.eql(u8, t, "-0")) t = "0";
+    try w.writeAll(t);
+}
 
 fn fieldStr(fields: anytype, name: []const u8) ?[]const u8 {
     for (fields) |f| if (std.mem.eql(u8, f.name, name)) return switch (f.val) {
@@ -1514,6 +1704,7 @@ const testing = std.testing;
 fn runLines(src: []const u8, mode: Mode) ![]u8 {
     var scene = Scene.init(testing.allocator);
     defer scene.deinit();
+    scene.sample = false; // tests/"plot and surf are sampled" checks the samples
     var st = Stream.init(mode);
     defer st.deinit(testing.allocator);
     var aw: Writer.Allocating = .init(testing.allocator);
@@ -1614,6 +1805,50 @@ test "plot needs axes; del cascades to children" {
         \\{"op":"diag","level":"error","line":7,"msg":"move: unknown name 'p'"}
         \\
     );
+}
+
+test "plot and surf are sampled" {
+    var scene = Scene.init(testing.allocator);
+    defer scene.deinit();
+    var st = Stream.init(.vcl);
+    defer st.deinit(testing.allocator);
+    var aw: Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try st.feed(&scene,
+        \\ax: axes 0,0 x=-2..2 y=-1..1
+        \\f: plot ax "1/x" x=-1..1
+        \\g: plot ax "cos(t)" "sin(t)" t=0..3.1415927
+        \\plot ax "x^"
+        \\plot ax "x+5"
+        \\s: surf ax "x+y"
+        \\a3: axes 0,0 z=0..1
+        \\s3: surf a3 "x+y" res=4
+        \\
+    , &aw.writer);
+    const out = aw.written();
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    _ = lines.next(); // axes
+    const f = lines.next().?;
+    // 1/x splits at the pole into two runs, clipped to y -1..1 (+5%).
+    try testing.expect(std.mem.indexOf(u8, f, "\"polys\":[[[-1,-1,0],") != null);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, f, "]],[[") + 1);
+    const g = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, g, "\"polys\":[[[1,0,0],") != null);
+    try testing.expect(std.mem.endsWith(u8, g, "[-1,0,0]]]}"));
+    try testing.expectEqualStrings(
+        \\{"op":"diag","level":"error","line":4,"msg":"plot: \"x^\": unexpected end of expression"}
+    , lines.next().?);
+    try testing.expectEqualStrings(
+        \\{"op":"diag","level":"error","line":5,"msg":"plot: nothing to draw: \"x+5\" has no values inside the axes' y range -1..1 for x in this range"}
+    , lines.next().?);
+    try testing.expectEqualStrings(
+        \\{"op":"diag","level":"error","line":6,"msg":"surf: needs 3D axes (give 'ax' a z=range)"}
+    , lines.next().?);
+    _ = lines.next(); // a3
+    // 5×5 grid over x,y -5..5, clamped to z 0..1.
+    try testing.expect(std.mem.endsWith(u8, lines.next().?,
+        \\"res":4,"zgrid":{"n":4,"z":[0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,0,1,1,1,0,1,1,1,1]}}
+    ));
 }
 
 test "streaming in arbitrary chunks equals whole input" {

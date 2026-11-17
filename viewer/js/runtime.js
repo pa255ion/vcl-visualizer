@@ -935,10 +935,20 @@ function axesOf(e, c) {
 
 BUILD.plot = function (e, c) {
   const A = axesOf(e, c);
+  const color = c.color ?? PALETTE[A.plots++ % PALETTE.length];
+  // The parser samples the curve (docs/IR.md); expr.js is only the fallback
+  // for IR from an older server.
+  const polys = c.polys ? c.polys.map((pl) => pl.map((v) => A.map(new THREE.Vector3(...v)))) : samplePlot(A, c);
+  if (!polys.length) throw new Error('nothing to draw in this range');
+  strokeEntity(e, () => ({ polys, ends: [polys[0][0], polys.at(-1).at(-1)], label: polys.at(-1).at(-1), fixedOrigin: true }),
+    { width: c.width ?? 0.06, color, dash: c.dash });
+  if (c.label !== undefined) { e.addLabel(c.label, new THREE.Vector3(), 'left'); e.label.placeAt(e.ends[1].clone().add(new THREE.Vector3(0.2, 0.2, 0))); }
+};
+
+function samplePlot(A, c) {
   const fns = c.exprs.map((s) => {
     try { return compile(s, ['x', 't']); } catch (err) { throw new Error(`"${s}": ${err.message}`); }
   });
-  const color = c.color ?? PALETTE[A.plots++ % PALETTE.length];
   const polys = [];
   let cur = [];
   const push = (v) => cur.push(A.map(v));
@@ -968,24 +978,27 @@ BUILD.plot = function (e, c) {
     }
   }
   brk();
-  if (!polys.length) throw new Error('nothing to draw in this range');
-  strokeEntity(e, () => ({ polys, ends: [polys[0][0], polys.at(-1).at(-1)], label: polys.at(-1).at(-1), fixedOrigin: true }),
-    { width: c.width ?? 0.06, color, dash: c.dash });
-  if (c.label !== undefined) { e.addLabel(c.label, new THREE.Vector3(), 'left'); e.label.placeAt(e.ends[1].clone().add(new THREE.Vector3(0.2, 0.2, 0))); }
-};
+  return polys;
+}
 
 BUILD.surf = function (e, c) {
   const A = axesOf(e, c);
   if (!A.is3) throw new Error('surf needs 3D axes (give the axes a z=range)');
-  let f;
-  try { f = compile(c.expr, ['x', 'y']); } catch (err) { throw new Error(`"${c.expr}": ${err.message}`); }
   const [x0, x1] = c.x ?? A.x, [y0, y1] = c.y ?? A.y;
-  const n = Math.max(4, Math.min(160, Math.round(c.res ?? 56)));
-  const zs = new Float32Array((n + 1) * (n + 1));
   const [zlo, zhi] = A.z;
-  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
-    const z = f({ x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * j) / n });
-    zs[j * (n + 1) + i] = Number.isFinite(z) ? Math.min(zhi, Math.max(zlo, z)) : 0;
+  let n, zs;
+  if (c.zgrid) { // sampled by the parser: rows along y from y0, columns along x
+    n = c.zgrid.n;
+    zs = Float32Array.from(c.zgrid.z);
+  } else {
+    let f;
+    try { f = compile(c.expr, ['x', 'y']); } catch (err) { throw new Error(`"${c.expr}": ${err.message}`); }
+    n = Math.max(4, Math.min(160, Math.round(c.res ?? 56)));
+    zs = new Float32Array((n + 1) * (n + 1));
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+      const z = f({ x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * j) / n });
+      zs[j * (n + 1) + i] = Number.isFinite(z) ? Math.min(zhi, Math.max(zlo, z)) : 0;
+    }
   }
   const geo = new THREE.PlaneGeometry(1, 1, n, n);
   const pos = geo.attributes.position;

@@ -94,6 +94,21 @@ queued behind it by the time spent waiting. Commands that arrive meanwhile are
 scheduled from `T` as usual, not from `now`. The WebXR viewer holds every `say`
 after the first of a burst (a burst ends when the timeline runs empty).
 
+## Sampled plots and surfaces
+
+The parser evaluates `plot` and `surf` expressions itself (an expression error
+is a parse error), so renderers never need an expression evaluator. Both keep
+their source fields (`exprs`, `expr`) and add, in the axes' **data**
+coordinates:
+
+| Op | Field | Meaning |
+|---|---|---|
+| `plot` | `polys` | `[[[x,y,z], …], …]`: polylines (a curve breaks at poles and where it leaves the y range; z is 0 except for 3-expression curves) |
+| `surf` | `zgrid` | `{"n":N,"z":[…]}`: (N+1)² heights, row-major, rows along y from `y[0]`, columns along x from `x[0]` (the `x`/`y` keys, else the axes' ranges); clamped to the axes' z range |
+
+Map them through the axes like any `on=` data point. Numbers are rounded to
+about 1/20000 of the axis range.
+
 ## Pins
 
 Parts, blocks, code, tables and timing diagrams expose named pins. The parser
@@ -125,6 +140,6 @@ data coordinates; on 3D axes, data (x, y, z) maps to board (x, z-up, −y).
 * VRChat worlds can't open sockets. Udon can only fetch strings
   (`VRCStringDownloader`), about once every 5 seconds, from allow-listed hosts.
   So VRChat would poll `GET /scene` (plus a cursor parameter to add) rather
-  than stream. Keep ops simple enough to interpret in UdonSharp; avoid adding
-  anything that needs a full expression evaluator *client-side* only (sampling
-  `plot`/`surf` server-side into point arrays would be the VRChat path).
+  than stream. Keep ops simple enough to interpret in UdonSharp; anything that
+  would need an evaluator client-side is sampled server-side instead, as
+  `plot`/`surf` are.
