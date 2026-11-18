@@ -17,6 +17,8 @@ everything: names exist, types are right, and `plot`'s axes really are axes.
 | `GET /scene` | server → client | `{"cmds":[…]}`: everything needed to rebuild the current scene |
 | `POST /ask` | client → server | a learner question (plain text); broadcast as an `ask` event |
 | `POST /status` | tutor → server | `thinking` or `idle`; broadcast as a `status` event |
+| `GET /lessons/index.json` | server → client | built-in lessons: `[{"file","title"}]` (files at `/lessons/<file>`) |
+| `GET /library/index.json` | server → client | the `--lessons DIR` library: `{"lessons":[{"file","title"}]}` (files at `/library/<file>`; 404 without one) |
 
 On connect, a listening WebSocket client first gets
 `{"op":"replay","cmds":[…]}`. Apply those commands **instantly** (no

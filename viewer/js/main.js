@@ -287,8 +287,9 @@ voice.onVoices = (n) => {
 voice.onVoices(voice.browserVoices.length);
 voice.loading?.then(() => { $('#voice').value = voice.mode; }); // robot may fall back to browser
 
+// Lessons: viewer/lessons/NAME, or library/PATH from `vcl serve --lessons DIR`.
 async function loadLesson(name) {
-  const res = await fetch(`lessons/${name}${VQ}`);
+  const res = await fetch(name.startsWith('library/') ? name : `lessons/${name}${VQ}`);
   if (!res.ok) throw new Error(`no lesson ${name}`);
   editor.value = await res.text();
   modeSel.value = name.endsWith('.md') ? 'mixed' : 'vcl';
@@ -296,6 +297,15 @@ async function loadLesson(name) {
 const lessonSel = $('#lessons');
 fetch(`lessons/index.json${VQ}`).then((r) => r.json()).then((list) => {
   for (const l of list) lessonSel.add(new Option(l.title, l.file));
+  // The server's lesson library, one group per folder.
+  fetch('library/index.json').then((r) => (r.ok ? r.json() : null)).then((lib) => {
+    const groups = new Map();
+    for (const l of lib?.lessons ?? []) {
+      const dir = l.file.includes('/') ? l.file.slice(0, l.file.lastIndexOf('/')) : 'library';
+      if (!groups.has(dir)) groups.set(dir, lessonSel.appendChild(Object.assign(document.createElement('optgroup'), { label: dir })));
+      groups.get(dir).appendChild(new Option(l.title, `library/${l.file}`));
+    }
+  }).catch(() => {});
   lessonSel.onchange = async () => {
     if (!lessonSel.value) return;
     try {

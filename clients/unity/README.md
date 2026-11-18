@@ -25,7 +25,7 @@ With the Quest plugged in by USB (developer mode on):
 
 ```sh
 nix develop -c zig build                # the server, if not built yet
-./zig-out/bin/vcl serve --port 8093 &
+./zig-out/bin/vcl serve --port 8093 --lessons ~/path/to/lessons &   # --lessons is optional
 clients/unity/tools/install-quest.sh    # installs, forwards port 8093 over USB, starts the app
 ```
 
@@ -35,9 +35,29 @@ That writes it to the app's `server.txt`. Then load lessons from the web page
 (`http://localhost:8093`) or let the tutor talk. Everything the server
 broadcasts plays on every connected viewer.
 
-**Controls:** trigger = next step (in step mode), B/Y = step mode on/off,
-thumbstick click = recentre the classroom in front of you. On the desktop,
-Space/→/Enter is next and S toggles step mode.
+The NixOS firewall blocks port 8093 from the LAN. Without opening it, adb over
+Wi-Fi carries the port forward instead (needs the cable once per headset boot):
+`adb tcpip 5555 && adb connect <quest-ip>:5555 && adb reverse tcp:8093 tcp:8093`.
+
+**Controls:**
+
+| | Headset | Desktop |
+|---|---|---|
+| Lesson menu | A or X | M (arrows, Enter, Esc) |
+| Next step (step mode) | trigger | Space, →, Enter |
+| Step mode on/off | B or Y | S |
+| Recentre | thumbstick click | |
+| Upright ↔ reclined | hold thumbstick click (0.8 s) | |
+
+The **menu** lists the server's built-in lessons and its `--lessons` library,
+one folder per subfolder; point with either controller and pull the trigger.
+It also has Stop, step mode, and Upright/Recline. Picking a lesson clears the
+board and posts the lesson to the server, so every connected viewer plays it.
+
+**Reclined** (for lying down): recentring aligns the whole room with your view,
+pitch and roll included, so the board sits straight ahead of your eyes
+whichever way you lie. Upright recentring turns the room about the vertical
+only. The choice is remembered.
 
 ## Working on it
 
@@ -60,7 +80,9 @@ and writes `Assets/Vcl/Main.unity`. The Quest build runs it first.
 
 ### Snapshot test (no headset)
 
-This renders a lesson in the editor, headless, after playing it to the end:
+This renders a lesson in the editor, headless, after playing it to the end
+(`VCL_IR` may list several files, `a.jsonl:b.jsonl`; with `VCL_SHOTS=DIR`
+every board becomes `DIR/NAME-K.png`, and `VCL_MENU=1` adds the menu):
 
 ```sh
 ../../zig-out/bin/vcl compile ../../viewer/lessons/garden.vcl > /tmp/garden.jsonl
@@ -73,26 +95,24 @@ It needs a display for the GPU context (no `-nographics`).
 ## Layout
 
 ```
-Assets/Vcl/Scripts/   Runtime.cs (entities, anchors, change ops) · Builders.cs (one per drawing op)
-                      Timeline.cs · Board.cs · Avatar.cs · Draw.cs (strokes, fills, text) · Json.cs
-                      Connection.cs (WebSocket) · VclApp.cs (scene, input, headset, status line)
+Assets/Vcl/Scripts/   Runtime.cs (entities, pins, parts, change ops) · Builders.cs (shapes, text, axes, LaTeX → text)
+                      Diagrams.cs (part, wire, block, frame, code, table, wave, img) · Charts.cs (nn, grid,
+                      bits, bars, hist, scatter, errbar, band, contour) · Parts.cs (symbols, wire routing)
+                      Panels.cs (syntax highlighting, wave parsing) · Timeline.cs · Board.cs · Avatar.cs
+                      Draw.cs (strokes, fills, text, fonts) · Json.cs · Connection.cs (WebSocket)
+                      Menu.cs (lesson menu) · VclApp.cs (scene, input, headset, lessons over HTTP)
 Assets/Vcl/Resources/ VclUnlit.shader (stereo-instancing safe) · VclLit.shader
+                      Fonts/ DejaVu Sans (+ Mono): fallback glyphs and code panels
 Assets/Vcl/Editor/    VclBuild.cs (Setup, Quest, Snapshot)
 tools/                unity.sh · build-quest.sh · install-quest.sh
 ```
 
 ## Not drawn yet
 
-The following ops play as a dimmed `[op]` placeholder, so a lesson still runs
-through, and the status line notes each one: `img`, `svg`, `model`, `part`,
-`wire`, `block`, `frame`, `code`, `table`, `wave`, and the charts and
-diagrams `nn`, `grid`, `bits`, `bars`, `hist`, `scatter`, `errbar`, `band` and
-`contour` (their data arrive parsed, see `docs/IR.md`). A change aimed at one
-of their parts (`hl n.L1_3`) acts on the whole placeholder. Also missing:
-
-- **`tex`:** shown as plain text with Unicode symbols (`\frac`, Greek letters,
-  sub- and superscripts), not typeset.
-- **`set … focus=`:** not supported.
+- **`svg` and `model`:** play as a dimmed `[op]` placeholder, so a lesson still
+  runs through, and the status line notes each one.
+- **`tex`:** shown as text with Unicode symbols and sub/superscripts
+  (fractions as a/b, matrices as (a b; c d)), not typeset.
 - **Speech:** there is no voice yet; the subtitles carry the text.
 - **`surf … wire=true`:** draws grid lines rather than a true wireframe.
 

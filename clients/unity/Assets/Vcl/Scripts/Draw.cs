@@ -343,17 +343,102 @@ namespace Vcl
             return m;
         }
 
+        static readonly Dictionary<int, Mesh> discs = new Dictionary<int, Mesh>();
+        /// <summary>Filled circle of radius r in the xy plane (cached per radius).</summary>
+        public static Mesh Disc(float r, int n = 32)
+        {
+            int key = Mathf.RoundToInt(r * 10000) * 1000 + n;
+            if (discs.TryGetValue(key, out var m) && m) return m;
+            var v = new List<Vector3> { Vector3.zero };
+            var t = new List<int>();
+            for (int i = 0; i < n; i++)
+            {
+                float a = i / (float)n * Mathf.PI * 2;
+                v.Add(new Vector3(Mathf.Cos(a) * r, Mathf.Sin(a) * r, 0));
+                t.Add(0); t.Add(1 + i); t.Add(1 + (i + 1) % n);
+            }
+            m = new Mesh { vertices = v.ToArray(), triangles = t.ToArray() };
+            WithWhite(m);
+            m.RecalculateBounds();
+            return discs[key] = m;
+        }
+
+        /// <summary>Annulus r0..r1 in the xy plane.</summary>
+        public static Mesh Ring(float r0, float r1, int n = 40)
+        {
+            var v = new List<Vector3>();
+            var t = new List<int>();
+            for (int i = 0; i < n; i++)
+            {
+                float a = i / (float)n * Mathf.PI * 2;
+                var d = new Vector3(Mathf.Cos(a), Mathf.Sin(a), 0);
+                v.Add(d * r0); v.Add(d * r1);
+                int j = (i + 1) % n;
+                t.AddRange(new[] { 2 * i, 2 * i + 1, 2 * j, 2 * j, 2 * i + 1, 2 * j + 1 });
+            }
+            var m = new Mesh { vertices = v.ToArray(), triangles = t.ToArray() };
+            WithWhite(m);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        /// <summary>A unit quad scaled to the rectangle with corners a and b.</summary>
+        public static void SetQuad(Transform q, Vector3 a, Vector3 b)
+        {
+            q.localPosition = (a + b) / 2;
+            q.localScale = new Vector3(Mathf.Max(1e-4f, Mathf.Abs(b.x - a.x)), Mathf.Max(1e-4f, Mathf.Abs(b.y - a.y)), 1);
+        }
+
+        public static Transform QuadObj(Transform parent, Material mat, int order = 1) =>
+            MeshObject(parent, "quad", Primitive(PrimitiveType.Quad), mat, order).transform;
+
         // ── text ──
 
-        static TMP_FontAsset font;
-        public static TMP_FontAsset Font => font ? font : font = Resources.Load<TMP_FontAsset>("Fonts & Materials/LiberationSans SDF");
+        static TMP_FontAsset font, mono;
+
+        /// <summary>A dynamic SDF font asset made at runtime from a TTF in Resources/Fonts.</summary>
+        static TMP_FontAsset Dynamic(string name)
+        {
+            var ttf = Resources.Load<Font>("Fonts/" + name);
+            return ttf ? TMP_FontAsset.CreateFontAsset(ttf, 72, 7, UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA, 1024, 1024) : null;
+        }
+
+        /// <summary>LiberationSans, falling back to DejaVu Sans for what it lacks (⊕ ≪ ₀ ᴸ …).</summary>
+        public static TMP_FontAsset Font
+        {
+            get
+            {
+                if (font) return font;
+                font = Resources.Load<TMP_FontAsset>("Fonts & Materials/LiberationSans SDF");
+                var fb = Dynamic("DejaVuSans");
+                if (font && fb)
+                {
+                    font.fallbackFontAssetTable ??= new List<TMP_FontAsset>();
+                    font.fallbackFontAssetTable.RemoveAll(f => f == null || f.name.StartsWith("DejaVuSans"));
+                    font.fallbackFontAssetTable.Add(fb);
+                }
+                return font;
+            }
+        }
+
+        /// <summary>DejaVu Sans Mono (code panels), falling back to the main font.</summary>
+        public static TMP_FontAsset Mono
+        {
+            get
+            {
+                if (mono) return mono;
+                mono = Dynamic("DejaVuSansMono");
+                if (mono && Font) mono.fallbackFontAssetTable = new List<TMP_FontAsset> { Font };
+                return mono ? mono : Font;
+            }
+        }
 
         /// <summary>World text; `size` is the line height in board units (as text.js).</summary>
-        public static TextMeshPro Text(Transform parent, string text, float size, Color color, string align = "center", bool bold = true)
+        public static TextMeshPro Text(Transform parent, string text, float size, Color color, string align = "center", bool bold = true, TMP_FontAsset face = null)
         {
             var go = Child(parent, "text");
             var t = go.AddComponent<TextMeshPro>();
-            if (Font) t.font = Font;
+            if (face ?? Font) t.font = face ?? Font;
             t.enableWordWrapping = false;
             t.overflowMode = TextOverflowModes.Overflow;
             t.fontSize = size * 10f / 1.2f; // TMP: fontSize 10 ≈ 1 unit per line

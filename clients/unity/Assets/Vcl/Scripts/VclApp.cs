@@ -7,10 +7,15 @@
 //   2. <persistentDataPath>/server.txt         (Quest: tools/set-server.sh)
 //   3. ws://127.0.0.1:8093/ws                   (Quest over USB after `adb reverse tcp:8093 tcp:8093`)
 //
-// Controls (headset): trigger = next step, B/Y = step mode on/off,
-// thumbstick click = recentre. Desktop: Space/→/Enter = next, S = step mode.
+// Controls (headset): A/X = lesson menu, trigger = next step (or choose, in
+// the menu), B/Y = step mode on/off, thumbstick click = recentre, hold it =
+// switch between upright and reclined (the room follows your view, for
+// lying down). Desktop: M = menu (arrows + Enter), Space/→/Enter = next,
+// S = step mode.
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Net.Http;
 using TMPro;
 using UnityEngine;
 using UnityEngine.XR;
@@ -31,6 +36,14 @@ namespace Vcl
         readonly List<string> logLines = new List<string>();
         bool xr, recentred;
         readonly Dictionary<string, bool> wasPressed = new Dictionary<string, bool>();
+        public Menu Menu;
+        static readonly HttpClient http = new HttpClient { Timeout = System.TimeSpan.FromSeconds(15) };
+        /// <summary>Reclined: recentring aligns the room with the view, pitch and roll too.</summary>
+        bool reclined;
+        float stickDown = -1;
+        bool stickLong;
+        XRNode pointerHand = XRNode.RightHand;
+        int stickPage; // last thumbstick page direction (edge-detect flicks)
 
         float smokeAt = -1; // -vclSmoke SECS: report what played, then quit (headless tests)
 
@@ -43,6 +56,79 @@ namespace Vcl
             Debug.Log($"[vcl] server {url}");
             conn = new Connection(url);
             Runtime.Stepping = PlayerPrefs.GetInt("vcl.step", 0) == 1;
+            Runtime.LoadTexture = (u, done) => LoadTexture(u, done);
+            reclined = PlayerPrefs.GetInt("vcl.recline", 0) == 1;
+            FetchLessons();
+        }
+
+        /// <summary>http://host:port of the server the WebSocket talks to.</summary>
+        string HttpBase => conn == null ? "http://127.0.0.1:8093" : System.Text.RegularExpressions.Regex.Replace(conn.Url, "^ws", "http").Replace("/ws", "");
+
+        // ── lessons over HTTP (await resumes on Unity's main thread) ──
+
+        async void FetchLessons()
+        {
+            var list = new List<LessonInfo>();
+            try
+            {
+                var builtIn = (List<object>)Json.Parse(await http.GetStringAsync(HttpBase + "/lessons/index.json"));
+                foreach (Dictionary<string, object> l in builtIn)
+                    list.Add(new LessonInfo { Path = "lessons/" + l["file"], Title = l["title"] as string, Folder = "Built-in lessons" });
+                try
+                {
+                    var lib = (Dictionary<string, object>)Json.Parse(await http.GetStringAsync(HttpBase + "/library/index.json"));
+                    foreach (Dictionary<string, object> l in (List<object>)lib["lessons"])
+                    {
+                        var file = (string)l["file"];
+                        int slash = file.LastIndexOf('/');
+                        list.Add(new LessonInfo { Path = "library/" + file, Title = l["title"] as string, Folder = slash > 0 ? file.Substring(0, slash) : "Library" });
+                    }
+                }
+                catch (HttpRequestException) { } // no --lessons library
+                Menu.Status = $"{list.Count} lessons from {HttpBase}";
+            }
+            catch (System.Exception e)
+            {
+                Menu.Status = $"can't list lessons from {HttpBase}: {e.Message}";
+            }
+            Menu.Lessons = list;
+            if (Menu.Open) Menu.Rebuild();
+        }
+
+        async void PlayLesson(LessonInfo l)
+        {
+            try
+            {
+                var text = await http.GetStringAsync($"{HttpBase}/{System.Uri.EscapeUriString(l.Path)}");
+                StopLesson(false);
+                await http.PostAsync(HttpBase + "/vcl?mode=vcl", new StringContent("clear\nboard\n"));
+                if (!text.EndsWith("\n")) text += "\n";
+                var mode = l.Path.EndsWith(".md") ? "mixed" : "vcl";
+                var res = await http.PostAsync($"{HttpBase}/vcl?mode={mode}", new StringContent(text));
+                Debug.Log($"[vcl] played {l.Path}: {(await res.Content.ReadAsStringAsync()).Trim().Split('\n').LastOrDefault()}");
+            }
+            catch (System.Exception e) { Log("error", $"{l.Path}: {e.Message}"); }
+        }
+
+        /// <summary>Drop what is playing here (and, unless only local, tell the server to clear).</summary>
+        void StopLesson(bool tellServer)
+        {
+            Runtime.Reset();
+            Board.Apply(Board.Default);
+            Avatar.Say("", 0);
+            if (tellServer) _ = http.PostAsync(HttpBase + "/vcl?mode=vcl", new StringContent("clear\nboard\n"));
+        }
+
+        async void LoadTexture(string url, System.Action<Texture2D> done)
+        {
+            try
+            {
+                var full = url.StartsWith("http") ? url : $"{HttpBase}/{url.TrimStart('/')}";
+                var bytes = await http.GetByteArrayAsync(full);
+                var tex = new Texture2D(2, 2);
+                done(tex.LoadImage(bytes) ? tex : null);
+            }
+            catch (System.Exception) { done(null); }
         }
 
         /// <summary>Everything except the connection (also used by the editor snapshot test).</summary>
@@ -107,6 +193,17 @@ namespace Vcl
             status.renderer.sortingOrder = 6;
 
             Runtime = new Runtime(stage, Board, Avatar, Cam, Log);
+            Menu = new Menu
+            {
+                Play = PlayLesson,
+                Stop = () => StopLesson(true),
+                ToggleStep = ToggleStep,
+                Stepping = () => Runtime.Stepping,
+                Reclined = () => reclined,
+                Upright = () => SetReclined(false),
+                Recline = () => SetReclined(true),
+                Refresh = FetchLessons,
+            };
             xr = XRSettings.isDeviceActive;
             if (xr)
             {
@@ -180,12 +277,35 @@ namespace Vcl
             var head = InputDevices.GetDeviceAtXRNode(XRNode.CenterEye);
             if (head.TryGetFeatureValue(CommonUsages.centerEyePosition, out var pos)) Cam.transform.localPosition = pos;
             if (head.TryGetFeatureValue(CommonUsages.centerEyeRotation, out var rot)) Cam.transform.localRotation = rot;
-            if (!recentred && head.isValid && pos != Vector3.zero) { Recentre(); recentred = true; }
+            if (!recentred && head.isValid && pos != Vector3.zero)
+            {
+                Recentre();
+                recentred = true;
+                var usages = new List<InputFeatureUsage>();
+                var hand = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
+                if (hand.isValid && hand.TryGetFeatureUsages(usages))
+                    Debug.Log($"[vcl] right hand '{hand.name}': {string.Join(", ", usages.Select(u => u.name))}");
+            }
         }
 
-        /// <summary>Put the classroom in front of wherever the learner now looks.</summary>
+        void SetReclined(bool on)
+        {
+            reclined = on;
+            PlayerPrefs.SetInt("vcl.recline", on ? 1 : 0);
+            Recentre();
+        }
+
+        /// <summary>Put the classroom in front of wherever the learner now looks. Upright:
+        /// turn it about the vertical only. Reclined: align it with the view itself
+        /// (pitch and roll too), so the board is ahead of your eyes lying down.</summary>
         void Recentre()
         {
+            if (reclined)
+            {
+                var r = Cam.transform.rotation;
+                Classroom.SetPositionAndRotation(Cam.transform.position - r * new Vector3(0, 1.6f, 0.05f), r);
+                return;
+            }
             var fwd = Cam.transform.forward;
             fwd.y = 0;
             if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.forward;
@@ -203,33 +323,80 @@ namespace Vcl
             return down && !was;
         }
 
+        void ToggleStep()
+        {
+            Runtime.Stepping = !Runtime.Stepping;
+            PlayerPrefs.SetInt("vcl.step", Runtime.Stepping ? 1 : 0);
+            if (!Runtime.Stepping) Runtime.Next();
+        }
+
+        static bool Held(XRNode hand, InputFeatureUsage<bool> usage)
+        {
+            var d = InputDevices.GetDeviceAtXRNode(hand);
+            return d.isValid && d.TryGetFeatureValue(usage, out var v) && v;
+        }
+
+        /// <summary>The controller's pointing ray (OpenXR aim pose; else the grip pose tilted forward).</summary>
+        static Ray? HandRay(XRNode hand)
+        {
+            var d = InputDevices.GetDeviceAtXRNode(hand);
+            if (!d.isValid) return null;
+            if (d.TryGetFeatureValue(new InputFeatureUsage<Vector3>("PointerPosition"), out var p) &&
+                d.TryGetFeatureValue(new InputFeatureUsage<Quaternion>("PointerRotation"), out var q) && q != default)
+                return new Ray(p, q * Vector3.forward);
+            if (d.TryGetFeatureValue(CommonUsages.devicePosition, out p) && d.TryGetFeatureValue(CommonUsages.deviceRotation, out q))
+                return new Ray(p, q * Quaternion.Euler(35, 0, 0) * Vector3.forward);
+            return null;
+        }
+
         void HandleInput()
         {
-            bool next = false, toggleStep = false, recentre = false;
+            bool next = false, toggleStep = false, recentre = false, menu = false, press = false;
+            int page = 0, keyMove = 0;
             if (xr)
             {
                 foreach (var hand in new[] { XRNode.LeftHand, XRNode.RightHand })
                 {
-                    next |= Pressed(hand, CommonUsages.triggerButton, hand + "trig");
+                    bool trig = Pressed(hand, CommonUsages.triggerButton, hand + "trig");
+                    if (trig) pointerHand = hand;
+                    next |= trig;
+                    press |= trig;
                     toggleStep |= Pressed(hand, CommonUsages.secondaryButton, hand + "b");
-                    recentre |= Pressed(hand, CommonUsages.primary2DAxisClick, hand + "stick");
+                    menu |= Pressed(hand, CommonUsages.primaryButton, hand + "a");
+                    var dev = InputDevices.GetDeviceAtXRNode(hand);
+                    if (dev.isValid && dev.TryGetFeatureValue(CommonUsages.primary2DAxis, out var stick) && Mathf.Abs(stick.y) > 0.7f) page = stick.y > 0 ? -1 : 1;
                 }
+                // Thumbstick click: recentre; hold it (0.8 s): switch upright ↔ reclined.
+                bool stickHeld = Held(XRNode.LeftHand, CommonUsages.primary2DAxisClick) || Held(XRNode.RightHand, CommonUsages.primary2DAxisClick);
+                if (stickHeld && stickDown < 0) { stickDown = Time.time; stickLong = false; }
+                if (stickHeld && !stickLong && Time.time - stickDown > 0.8f) { stickLong = true; SetReclined(!reclined); }
+                if (!stickHeld && stickDown >= 0) { if (!stickLong) recentre = true; stickDown = -1; }
             }
 #if ENABLE_INPUT_SYSTEM
             var kb = UnityEngine.InputSystem.Keyboard.current;
             if (kb != null)
             {
-                next |= kb.spaceKey.wasPressedThisFrame || kb.rightArrowKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame;
+                bool enter = kb.enterKey.wasPressedThisFrame;
+                menu |= kb.mKey.wasPressedThisFrame || (Menu.Open && kb.escapeKey.wasPressedThisFrame);
+                if (Menu.Open)
+                {
+                    keyMove = kb.downArrowKey.wasPressedThisFrame ? 1 : kb.upArrowKey.wasPressedThisFrame ? -1 : 0;
+                    press |= enter;
+                    if (keyMove != 0 || enter) Menu.Key(keyMove, enter);
+                }
+                else next |= kb.spaceKey.wasPressedThisFrame || kb.rightArrowKey.wasPressedThisFrame || enter;
                 toggleStep |= kb.sKey.wasPressedThisFrame;
             }
 #endif
-            if (next) Runtime.Next();
-            if (toggleStep)
+            if (menu) Menu.Toggle(Cam.transform);
+            if (Menu.Open)
             {
-                Runtime.Stepping = !Runtime.Stepping;
-                PlayerPrefs.SetInt("vcl.step", Runtime.Stepping ? 1 : 0);
-                if (!Runtime.Stepping) Runtime.Next();
+                if (xr) Menu.Point(HandRay(pointerHand), press);
+                if (page != 0 && page != stickPage) Menu.Page(page);
+                stickPage = page;
             }
+            else if (next) Runtime.Next();
+            if (toggleStep) ToggleStep();
             if (recentre) Recentre();
         }
 
@@ -238,7 +405,7 @@ namespace Vcl
             if (!status) return;
             string link = conn == null ? "" : conn.State == "live" ? "<color=#66bb6a>● live</color>" : $"<color=#ffa726>● {conn.State}</color> {conn.Url}" + (conn.LastError != null ? $"\n<size=70%>{conn.LastError}</size>" : "");
             string play = Runtime.Waiting ? "<color=#ffe066>paused · trigger for next</color>" : Runtime.Timeline.Busy ? "playing" : "";
-            string step = Runtime.Stepping ? "  step mode" : "";
+            string step = (Runtime.Stepping ? "  step mode" : "") + (reclined ? "  reclined" : "");
             status.text = $"{link}  {play}{step}" + (logLines.Count > 0 ? "\n<size=80%>" + string.Join("\n", logLines) + "</size>" : "");
             // Top-left corner of the board, just above it.
             float hw = Board.Width / 2 + 0.5f, top = Board.Height / 2 + 0.4f;

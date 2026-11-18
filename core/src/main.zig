@@ -2,12 +2,14 @@
 //!
 //!   vcl check [--mixed] FILE...  report diagnostics (exit 1 on errors); .md is mixed; - is stdin
 //!   vcl compile [--mixed] FILE   print the JSON IR, one command per line (- is stdin)
-//!   vcl serve [--port N] [--host H] [--root DIR] [--assets DIR]
+//!   vcl serve [--port N] [--host H] [--root DIR] [--assets DIR] [--lessons DIR]
 //!
 //! The server:
 //!   GET  /            the viewer (static files from --root, default "viewer")
 //!   GET  /assets/…    files you provide (--assets DIR, default ROOT/assets):
 //!                     SVGs, images, glTF/STL/OBJ models; /assets/index.json lists them
+//!   GET  /library/…   a lesson library (--lessons DIR): its .vcl files and the .md
+//!                     files with ```vcl fences; /library/index.json lists them
 //!   GET  /ws          WebSocket: receives IR; may also send VCL text chunks
 //!                     (?mode=mixed for prose+fences, ?listen=0 to only send)
 //!   POST /vcl         body = VCL text (?mode=mixed, ?pace=MS between lines);
@@ -27,7 +29,7 @@ const usage =
     \\usage:
     \\  vcl check [--mixed] FILE...    report diagnostics (.md files are mixed; - reads stdin)
     \\  vcl compile [--mixed] FILE     print JSON IR (one command per line; - reads stdin)
-    \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer] [--assets DIR]
+    \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer] [--assets DIR] [--lessons DIR]
     \\
 ;
 
@@ -153,6 +155,8 @@ const Hub = struct {
     root: Io.Dir,
     /// Where /assets/… comes from (null: no assets directory).
     assets: ?Io.Dir,
+    /// Where /library/… comes from (null: no lesson library).
+    library: ?Io.Dir = null,
     mutex: Io.Mutex = .init,
     scene: vcl.Scene,
     clients: std.ArrayList(*Client) = .empty,
@@ -262,6 +266,7 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
     var host: []const u8 = "127.0.0.1";
     var root_path: []const u8 = "viewer";
     var assets_path: ?[]const u8 = null;
+    var lessons_path: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -274,6 +279,8 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
             root_path = args[i + 1];
         } else if (std.mem.eql(u8, a, "--assets")) {
             assets_path = args[i + 1];
+        } else if (std.mem.eql(u8, a, "--lessons")) {
+            lessons_path = args[i + 1];
         } else return error.UnknownOption;
         i += 1;
     }
@@ -288,7 +295,11 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
     defer if (assets) |*d| d.close(io);
     if (assets_path) |ap| std.log.info("assets: {s}/ at /assets/", .{ap});
 
-    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .scene = vcl.Scene.init(gpa) };
+    var library: ?Io.Dir = if (lessons_path) |lp| try Io.Dir.cwd().openDir(io, lp, .{ .iterate = true }) else null;
+    defer if (library) |*d| d.close(io);
+    if (lessons_path) |lp| std.log.info("lessons: {s}/ at /library/", .{lp});
+
+    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .library = library, .scene = vcl.Scene.init(gpa) };
     defer hub.scene.deinit();
 
     const addr = try Io.net.IpAddress.parse(host, port);
@@ -495,13 +506,27 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         return true;
     }
 
-    // Static files (and /assets/… from the assets directory).
+    if (std.mem.eql(u8, path, "/library/index.json")) {
+        const listing = try libraryIndex(hub);
+        defer gpa.free(listing);
+        try req.respond(listing, .{ .extra_headers = &.{ cors, .{ .name = "content-type", .value = "application/json" }, .{ .name = "cache-control", .value = "no-cache" } } });
+        return true;
+    }
+
+    // Static files (and /assets/…, /library/… from their directories).
     var dir = hub.root;
     var rel = if (std.mem.eql(u8, path, "/")) "index.html" else path[1..];
     if (std.mem.startsWith(u8, path, "/assets/")) if (hub.assets) |a| {
         dir = a;
         rel = path["/assets/".len..];
     };
+    if (std.mem.startsWith(u8, path, "/library/")) {
+        dir = hub.library orelse {
+            try req.respond("no lesson library (start the server with --lessons DIR)\n", .{ .status = .not_found, .extra_headers = &.{cors} });
+            return true;
+        };
+        rel = path["/library/".len..];
+    }
     if (rel.len == 0 or std.mem.indexOf(u8, rel, "..") != null or rel[0] == '/') {
         try req.respond("bad path\n", .{ .status = .bad_request });
         return true;
@@ -519,6 +544,80 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         .{ .name = "cache-control", .value = "no-cache" },
     } });
     return true;
+}
+
+/// {"lessons":[{"file":"u01/02-x.md","title":"…"},…]}: the --lessons library,
+/// sorted by path. A lesson is a .vcl file or a .md file with a ```vcl fence;
+/// its title is the first `# ` heading (.md) or `title "…"` command (.vcl),
+/// else the file name.
+fn libraryIndex(hub: *Hub) ![]u8 {
+    const gpa = hub.gpa;
+    const Lesson = struct { file: []u8, title: []u8 };
+    var list: std.ArrayList(Lesson) = .empty;
+    defer {
+        for (list.items) |l| {
+            gpa.free(l.file);
+            gpa.free(l.title);
+        }
+        list.deinit(gpa);
+    }
+    if (hub.library) |lib| {
+        var walker = try lib.walk(gpa);
+        defer walker.deinit();
+        while (try walker.next(hub.io)) |e| {
+            if (e.kind != .file or list.items.len >= 2000) continue;
+            if (std.mem.indexOf(u8, e.path, "/.") != null or e.path[0] == '.') continue;
+            const md = std.mem.endsWith(u8, e.path, ".md");
+            if (!md and !std.mem.endsWith(u8, e.path, ".vcl")) continue;
+            const text = lib.readFileAlloc(hub.io, e.path, gpa, .limited(4 << 20)) catch continue;
+            defer gpa.free(text);
+            if (md and !hasFence(text)) continue; // notes, not a lesson
+            var title: []const u8 = std.fs.path.basename(e.path);
+            var lines = std.mem.splitScalar(u8, text, '\n');
+            while (lines.next()) |raw| {
+                const l = std.mem.trim(u8, raw, " \t\r");
+                if (md and std.mem.startsWith(u8, l, "# ")) {
+                    title = std.mem.trim(u8, l[2..], " ");
+                    break;
+                }
+                if (!md and std.mem.startsWith(u8, l, "title ")) {
+                    const q = std.mem.trim(u8, l[6..], " ");
+                    if (q.len >= 2 and q[0] == '"') if (std.mem.lastIndexOfScalar(u8, q, '"')) |end| if (end > 0) {
+                        title = q[1..end];
+                        break;
+                    };
+                }
+            }
+            const file = try gpa.dupe(u8, e.path);
+            errdefer gpa.free(file);
+            try list.append(gpa, .{ .file = file, .title = try gpa.dupe(u8, title) });
+        }
+    }
+    std.mem.sort(Lesson, list.items, {}, struct {
+        fn lt(_: void, x: Lesson, y: Lesson) bool {
+            return std.mem.lessThan(u8, x.file, y.file);
+        }
+    }.lt);
+    var aw: Io.Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+    try aw.writer.writeAll("{\"lessons\":[");
+    for (list.items, 0..) |l, i| {
+        if (i > 0) try aw.writer.writeByte(',');
+        try aw.writer.writeAll("{\"file\":");
+        try vcl.writeJsonString(&aw.writer, l.file);
+        try aw.writer.writeAll(",\"title\":");
+        try vcl.writeJsonString(&aw.writer, l.title);
+        try aw.writer.writeByte('}');
+    }
+    try aw.writer.writeAll("]}");
+    return aw.toOwnedSlice();
+}
+
+/// A line that is just ```vcl (a board fence, not a mention of one).
+fn hasFence(text: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |l| if (std.mem.eql(u8, std.mem.trim(u8, l, " \t\r"), "```vcl")) return true;
+    return false;
 }
 
 /// {"files":["chip.svg","models/arm.stl",…]}: what the teacher can show.

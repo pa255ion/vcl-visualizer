@@ -18,7 +18,27 @@ namespace Vcl
         public string Role; // stroke, fill, solid, text, label
         public Color Color;
         public float BaseAlpha;
+        /// <summary>A part faded on its own (fade n.L1 0.2).</summary>
+        public float Dim = 1;
         public Action<Color> Apply;
+    }
+
+    /// <summary>A named piece of a diagram that hl/color/fade can target (n.L1_3, g.r2c3).</summary>
+    public class Part
+    {
+        public List<Tint> Tints = new List<Tint>();
+        public List<Transform> Objs = new List<Transform>();
+        public Action Apply;
+    }
+
+    /// <summary>What a change op acts on: a whole entity or one of its parts.</summary>
+    public class Target
+    {
+        public Entity E;
+        public List<Tint> Tints;
+        public List<Transform> Objs;
+        public Action Apply;
+        public bool Whole;
     }
 
     public class AxesInfo
@@ -49,6 +69,10 @@ namespace Vcl
         public Action<float> Render;
         public Action Refresh;
         public Action<string> SetText;
+        public Action<double[]> SetFocus;
+        /// <summary>Named connection points, obj-local (wires and refs attach here).</summary>
+        public Dictionary<string, (Vector3 at, Vector3 dir)> Pins;
+        public Dictionary<string, Part> Parts;
         public readonly List<Transform> Billboards = new List<Transform>();
         public readonly List<Stroke> Strokes = new List<Stroke>();
         public TextMeshPro Label;
@@ -75,14 +99,31 @@ namespace Vcl
 
         public Material Track(Material m, string role, float baseAlpha = 1)
         {
-            Tints.Add(new Tint { Role = role, Color = m.color, BaseAlpha = baseAlpha, Apply = c => m.color = c });
+            TrackT(m, role, baseAlpha);
             return m;
         }
 
         public TextMeshPro Track(TextMeshPro t, string role)
         {
-            Tints.Add(new Tint { Role = role, Color = t.color, BaseAlpha = t.color.a, Apply = c => t.color = c });
+            TrackT(t, role);
             return t;
+        }
+
+        public Tint TrackT(Material m, string role, float baseAlpha = 1)
+        {
+            var c = m.color;
+            c.a = 1;
+            var tint = new Tint { Role = role, Color = c, BaseAlpha = baseAlpha, Apply = col => { if (m) m.color = col; } };
+            Tints.Add(tint);
+            return tint;
+        }
+
+        public Tint TrackT(TextMeshPro t, string role, float baseAlpha = -1)
+        {
+            var c = t.color;
+            var tint = new Tint { Role = role, Color = c, BaseAlpha = baseAlpha >= 0 ? baseAlpha : c.a, Apply = col => { if (t) t.color = col; } };
+            Tints.Add(tint);
+            return tint;
         }
 
         public void ApplyOpacity()
@@ -91,7 +132,7 @@ namespace Vcl
             {
                 float f = Factor.TryGetValue(t.Role, out var x) ? x : 1;
                 var c = t.Color;
-                c.a = t.BaseAlpha * Opacity * f;
+                c.a = t.BaseAlpha * Opacity * f * t.Dim;
                 t.Apply(c);
             }
             bool vis = Opacity > 0.002f;
@@ -157,13 +198,13 @@ namespace Vcl
         public static readonly Dictionary<string, string> DefaultFx = new Dictionary<string, string>
         {
             ["pt"] = "pop", ["text"] = "fade", ["tex"] = "fade", ["title"] = "fade", ["node"] = "pop", ["img"] = "fade",
-            ["svg"] = "fade", ["code"] = "fade", ["table"] = "fade",
+            ["svg"] = "fade", ["code"] = "fade", ["table"] = "fade", ["grid"] = "fade", ["bits"] = "fade", ["band"] = "fade",
             ["box"] = "grow", ["sphere"] = "grow", ["cyl"] = "grow", ["model"] = "grow",
         };
         public static readonly HashSet<string> Drawable = new HashSet<string>
         {
             "line", "arrow", "path", "poly", "rect", "circle", "angle", "edge", "axes", "plot", "surf",
-            "part", "wire", "block", "frame", "wave",
+            "part", "wire", "block", "frame", "wave", "nn", "bars", "hist", "scatter", "errbar", "contour",
         };
 
         public readonly Transform Stage;
@@ -258,11 +299,22 @@ namespace Vcl
         public Entity Get(string id)
         {
             if (id != null && Entities.TryGetValue(id, out var e)) return e;
-            // A diagram part (hl n.L1_3, color g.r2c3): this client draws those ops as
-            // placeholders, so the change applies to the whole entity.
-            var dot = id?.IndexOf('.') ?? -1;
-            if (dot > 0 && Entities.TryGetValue(id.Substring(0, dot), out e)) return e;
             throw new Exception($"unknown name '{id}'");
+        }
+
+        /// <summary>An entity, or one part of a diagram ('n.L1_3', 'g.r2c3').</summary>
+        public Target TargetOf(string id)
+        {
+            int dot = id?.IndexOf('.') ?? -1;
+            if (dot < 0)
+            {
+                var w = Get(id);
+                return new Target { E = w, Tints = new List<Tint>(w.ColorTints()), Objs = new List<Transform> { w.Obj }, Whole = true };
+            }
+            var e = Get(id.Substring(0, dot));
+            var name = id.Substring(dot + 1);
+            if (e.Parts == null || !e.Parts.TryGetValue(name, out var part)) throw new Exception($"'{e.Id}' has no part '{name}'");
+            return new Target { E = e, Tints = part.Tints, Objs = part.Objs, Apply = part.Apply };
         }
 
         public void Remove(string id)
@@ -329,6 +381,7 @@ namespace Vcl
         public Vector3 AnchorWorld(Entity e, string anchor = "center")
         {
             anchor ??= "center";
+            if (e.Pins != null && e.Pins.TryGetValue(anchor, out var pin)) return e.Obj.TransformPoint(pin.at);
             if ((anchor == "start" || anchor == "end") && e.Ends != null)
                 return e.Obj.TransformPoint(e.Ends[anchor == "start" ? 0 : 1]);
             if (anchor == "start") anchor = "left";
@@ -358,6 +411,16 @@ namespace Vcl
             var w = AnchorWorld(e, r.TryGetValue("anchor", out var a) ? a as string : null);
             var s = Stage.InverseTransformPoint(w) + (r.TryGetValue("off", out var off) && off != null ? B(off) : Vector3.zero);
             return Stage.TransformPoint(s);
+        }
+
+        /// <summary>Outward direction of a pin reference, in stage space (null if not a pin).</summary>
+        public Vector3? PinDir(Dictionary<string, object> r)
+        {
+            if (!(r["ref"] is string id) || !Entities.TryGetValue(id, out var e) || e.Pins == null) return null;
+            if (!(r.TryGetValue("anchor", out var a) && a is string an && e.Pins.TryGetValue(an, out var pin))) return null;
+            var p0 = Stage.InverseTransformPoint(e.Obj.TransformPoint(pin.at));
+            var p1 = Stage.InverseTransformPoint(e.Obj.TransformPoint(pin.at + pin.dir));
+            return (p1 - p0).normalized;
         }
 
         public Vector3 PointWorld(object pt) => IsRef(pt) ? RefWorld((Dictionary<string, object>)pt) : Stage.TransformPoint(B(pt));
@@ -455,8 +518,30 @@ namespace Vcl
                 case "move": return Change(c, e => MoveSetup(e, c["to"]));
                 case "rot": return Change(c, e => RotSetup(e, Raw(c["rot"])));
                 case "scale": return Change(c, e => ScaleSetup(e, c.Flt("scale", 1)));
-                case "fade": return Change(c, e => FadeSetup(e, c.Flt("opacity", 1)));
-                case "color": return Change(c, e => ColorSetup(e, Draw.Hex(c.Str("color"))));
+                case "fade":
+                    if (c.Str("target").Contains("."))
+                    {
+                        // One part: its own dimming factor.
+                        Target t = null;
+                        float[] from = null;
+                        float to = c.Flt("opacity", 1);
+                        return new Task
+                        {
+                            Begin = () => { t = TargetOf(c.Str("target")); from = t.Tints.ConvertAll(x => x.Dim).ToArray(); },
+                            Update = (p, raw) =>
+                            {
+                                for (int i = 0; i < t.Tints.Count; i++) t.Tints[i].Dim = from[i] + (to - from[i]) * p;
+                                t.E.ApplyOpacity();
+                                t.Apply?.Invoke();
+                            },
+                        };
+                    }
+                    return Change(c, e => FadeSetup(e, c.Flt("opacity", 1)));
+                case "color":
+                    {
+                        Action<float, float> u = null;
+                        return new Task { Begin = () => u = ColorSetup(TargetOf(c.Str("target")), Draw.Hex(c.Str("color"))), Update = (p, raw) => u?.Invoke(p, raw) };
+                    }
                 case "set":
                     return Change(c, e =>
                     {
@@ -466,8 +551,8 @@ namespace Vcl
                         if (c.Has("rot")) parts.Add(RotSetup(e, Raw(c["rot"])));
                         if (c.Has("scale")) parts.Add(ScaleSetup(e, c.Flt("scale", 1)));
                         if (c.Has("opacity")) parts.Add(FadeSetup(e, c.Flt("opacity", 1)));
-                        if (c.Has("color")) parts.Add(ColorSetup(e, Draw.Hex(c.Str("color"))));
-                        if (c.Has("focus")) Log("warning", $"line {c.Line}: set: focus isn't supported by the Unity client yet");
+                        if (c.Has("color")) parts.Add(ColorSetup(TargetOf(e.Id), Draw.Hex(c.Str("color"))));
+                        if (c.Has("focus")) e.SetFocus?.Invoke(c.Range("focus"));
                         return (p, raw) => { foreach (var u in parts) u(p, raw); };
                     });
                 case "hl": return HlTask(c);
@@ -585,10 +670,10 @@ namespace Vcl
             return (p, raw) => e.SetOpacity(from + (o - from) * p);
         }
 
-        Action<float, float> ColorSetup(Entity e, Color to)
+        Action<float, float> ColorSetup(Target t, Color to)
         {
-            var tints = new List<Tint>(e.ColorTints());
-            var from = tints.ConvertAll(t => t.Color);
+            var tints = t.Tints;
+            var from = tints.ConvertAll(x => x.Color);
             return (p, raw) =>
             {
                 for (int i = 0; i < tints.Count; i++)
@@ -597,7 +682,8 @@ namespace Vcl
                     c.a = from[i].a;
                     tints[i].Color = c;
                 }
-                e.ApplyOpacity();
+                t.E.ApplyOpacity();
+                t.Apply?.Invoke();
             };
         }
 
@@ -611,10 +697,11 @@ namespace Vcl
                     var hl = Draw.Hex(c.Str("color") ?? "#ffe066");
                     foreach (var id in c.List("ids"))
                     {
-                        var e = Get(id as string);
-                        var tints = new List<Tint>(e.ColorTints());
-                        var from = tints.ConvertAll(t => t.Color);
-                        float s0 = e.Obj.localScale.x;
+                        var t = TargetOf(id as string);
+                        var tints = t.Tints;
+                        var from = tints.ConvertAll(x => x.Color);
+                        var s0 = t.Objs.ConvertAll(o => o.localScale);
+                        float grow = t.Whole ? 0.12f : 0.3f;
                         us.Add(raw =>
                         {
                             float k = Mathf.Sin(Mathf.PI * raw);
@@ -624,8 +711,9 @@ namespace Vcl
                                 col.a = from[i].a;
                                 tints[i].Color = col;
                             }
-                            e.ApplyOpacity();
-                            e.Obj.localScale = Vector3.one * s0 * (1 + 0.12f * k);
+                            t.E.ApplyOpacity();
+                            for (int i = 0; i < t.Objs.Count; i++) if (t.Objs[i]) t.Objs[i].localScale = s0[i] * (1 + grow * k);
+                            t.Apply?.Invoke();
                         });
                     }
                 },

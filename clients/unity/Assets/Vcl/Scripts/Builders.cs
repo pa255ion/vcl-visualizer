@@ -1,6 +1,7 @@
 // One builder per drawing op: a port of the BUILD.* functions in
-// viewer/js/runtime.js. Ops the Unity client can't draw yet show a dimmed
-// placeholder naming the op, so a lesson still plays through.
+// viewer/js/runtime.js (diagrams in Diagrams.cs, charts in Charts.cs). Ops the
+// Unity client can't draw (svg, model) show a dimmed placeholder naming the
+// op, so a lesson still plays through.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -35,6 +36,23 @@ namespace Vcl
                 case "box": BuildBox(e, c); break;
                 case "sphere": BuildSphere(e, c); break;
                 case "cyl": BuildCyl(e, c); break;
+                case "part": BuildPart(e, c); break;
+                case "wire": BuildWire(e, c); break;
+                case "block": BuildBlock(e, c); break;
+                case "frame": BuildFrame(e, c); break;
+                case "code": BuildCode(e, c); break;
+                case "table": BuildTable(e, c); break;
+                case "wave": BuildWave(e, c); break;
+                case "img": BuildImg(e, c); break;
+                case "nn": BuildNn(e, c); break;
+                case "grid": BuildGrid(e, c); break;
+                case "bits": BuildBits(e, c); break;
+                case "bars": BarsEntity(e, c, null); break;
+                case "hist": BarsEntity(e, c, c.Flt("bw", 1) * 0.96f); break;
+                case "scatter": BuildScatter(e, c); break;
+                case "errbar": BuildErrbar(e, c); break;
+                case "band": BuildBand(e, c); break;
+                case "contour": BuildContour(e, c); break;
                 default: BuildPlaceholder(e, c); break;
             }
         }
@@ -45,6 +63,7 @@ namespace Vcl
         {
             public List<List<Vector3>> Polys;
             public List<Vector3> Fill;
+            public List<Vector3> Dots; // junction dots (wires)
             public Vector3[] Ends;
             public Vector3? Label;
             public bool Live, FixedOrigin;
@@ -78,6 +97,9 @@ namespace Vcl
             Material fillMat = null;
             MeshRenderer fill = null;
             if (o.FillColor.HasValue) fillMat = e.Track(Draw.Unlit(o.FillColor.Value, 3001), "fill", o.FillOpacity);
+            Material dotMat = null;
+            var dots = new List<Transform>();
+            List<Vector3> localDots = new List<Vector3>();
 
             var s = spec();
             var all = s.Polys.SelectMany(p => p).Concat(s.Fill ?? new List<Vector3>()).ToList();
@@ -102,6 +124,11 @@ namespace Vcl
                         fill = Draw.MeshObject(e.Body, "fill", Draw.Fill(s.Fill.Select(e.ParentToLocal).ToList()), fillMat);
                 }
                 if (e.Label && s.Label.HasValue) e.Label.transform.localPosition = e.ParentToLocal(s.Label.Value) + e.LabelShift;
+                localDots = (s.Dots ?? new List<Vector3>()).Select(e.ParentToLocal).ToList();
+                if (localDots.Count > 0 && dotMat == null) dotMat = e.Track(Draw.Unlit(o.Color, 3002), "stroke");
+                while (dots.Count < localDots.Count)
+                    dots.Add(Draw.MeshObject(e.Body, "dot", Draw.Disc(Mathf.Max(0.07f, o.Width * 1.6f)), dotMat, 2).transform);
+                for (int i = 0; i < localDots.Count; i++) dots[i].localPosition = localDots[i] + new Vector3(0, 0, -0.005f);
             }
             Compute();
 
@@ -123,6 +150,7 @@ namespace Vcl
                 }
                 else startHead?.Place(null);
                 stroke.Set(polys);
+                for (int i = 0; i < dots.Count; i++) dots[i].gameObject.SetActive(p > 0.95f && i < localDots.Count);
                 e.Factor["fill"] = p;
                 e.ApplyOpacity();
             };
@@ -674,59 +702,176 @@ namespace Vcl
         }
     }
 
-    /// <summary>LaTeX → readable plain text with Unicode symbols (TMP has no math layout).</summary>
+    /// <summary>LaTeX → readable text with Unicode symbols and TMP sub/superscripts
+    /// (TMP has no math layout). Covers what lessons use: fractions, scripts,
+    /// \text-style wrappers, accents, matrices, norms, arrows, Greek.</summary>
     public static class Tex
     {
         static readonly (string, string)[] Symbols =
         {
-            ("\\alpha", "α"), ("\\beta", "β"), ("\\gamma", "γ"), ("\\delta", "δ"), ("\\Delta", "Δ"), ("\\epsilon", "ε"),
-            ("\\varepsilon", "ε"), ("\\theta", "θ"), ("\\lambda", "λ"), ("\\mu", "μ"), ("\\pi", "π"), ("\\rho", "ρ"),
-            ("\\sigma", "σ"), ("\\Sigma", "Σ"), ("\\tau", "τ"), ("\\phi", "φ"), ("\\varphi", "φ"), ("\\omega", "ω"),
-            ("\\Omega", "Ω"), ("\\infty", "∞"), ("\\cdot", "·"), ("\\times", "×"), ("\\div", "÷"), ("\\pm", "±"),
-            ("\\leq", "≤"), ("\\le", "≤"), ("\\geq", "≥"), ("\\ge", "≥"), ("\\neq", "≠"), ("\\approx", "≈"),
-            ("\\to", "→"), ("\\rightarrow", "→"), ("\\Rightarrow", "⇒"), ("\\leftarrow", "←"), ("\\partial", "∂"),
-            ("\\nabla", "∇"), ("\\int", "∫"), ("\\sum", "Σ"), ("\\prod", "Π"), ("\\sqrt", "√"), ("\\in", "∈"),
+            ("\\alpha", "α"), ("\\beta", "β"), ("\\gamma", "γ"), ("\\delta", "δ"), ("\\epsilon", "ϵ"), ("\\varepsilon", "ε"),
+            ("\\zeta", "ζ"), ("\\eta", "η"), ("\\theta", "θ"), ("\\vartheta", "ϑ"), ("\\iota", "ι"), ("\\kappa", "κ"),
+            ("\\lambda", "λ"), ("\\mu", "μ"), ("\\nu", "ν"), ("\\xi", "ξ"), ("\\pi", "π"), ("\\rho", "ρ"), ("\\varrho", "ϱ"),
+            ("\\sigma", "σ"), ("\\varsigma", "ς"), ("\\tau", "τ"), ("\\upsilon", "υ"), ("\\phi", "ϕ"), ("\\varphi", "φ"),
+            ("\\chi", "χ"), ("\\psi", "ψ"), ("\\omega", "ω"),
+            ("\\Gamma", "Γ"), ("\\Delta", "Δ"), ("\\Theta", "Θ"), ("\\Lambda", "Λ"), ("\\Xi", "Ξ"), ("\\Pi", "Π"),
+            ("\\Sigma", "Σ"), ("\\Upsilon", "Υ"), ("\\Phi", "Φ"), ("\\Psi", "Ψ"), ("\\Omega", "Ω"),
+            ("\\infty", "∞"), ("\\cdot", "·"), ("\\times", "×"), ("\\div", "÷"), ("\\pm", "±"), ("\\mp", "∓"),
+            ("\\leq", "≤"), ("\\le", "≤"), ("\\geq", "≥"), ("\\ge", "≥"), ("\\neq", "≠"), ("\\ne", "≠"), ("\\approx", "≈"),
+            ("\\sim", "~"), ("\\simeq", "≃"), ("\\equiv", "≡"), ("\\propto", "∝"), ("\\ll", "≪"), ("\\gg", "≫"),
+            ("\\to", "→"), ("\\rightarrow", "→"), ("\\Rightarrow", "⇒"), ("\\implies", "⇒"), ("\\leftarrow", "←"), ("\\gets", "←"),
+            ("\\Leftarrow", "⇐"), ("\\leftrightarrow", "↔"), ("\\Leftrightarrow", "⇔"), ("\\iff", "⇔"), ("\\mapsto", "↦"),
+            ("\\uparrow", "↑"), ("\\downarrow", "↓"),
+            ("\\partial", "∂"), ("\\nabla", "∇"), ("\\int", "∫"), ("\\sum", "Σ"), ("\\prod", "Π"), ("\\in", "∈"), ("\\notin", "∉"),
+            ("\\subset", "⊂"), ("\\subseteq", "⊆"), ("\\cup", "∪"), ("\\cap", "∩"), ("\\emptyset", "∅"), ("\\forall", "∀"),
+            ("\\exists", "∃"), ("\\neg", "¬"), ("\\land", "∧"), ("\\lor", "∨"), ("\\oplus", "⊕"), ("\\otimes", "⊗"),
+            ("\\odot", "⊙"), ("\\circ", "∘"), ("\\star", "⋆"), ("\\ast", "∗"), ("\\top", "⊤"), ("\\dagger", "†"), ("\\prime", "′"),
+            ("\\ell", "ℓ"), ("\\ldots", "…"), ("\\cdots", "⋯"), ("\\dots", "…"), ("\\vdots", "⋮"),
+            ("\\lVert", "‖"), ("\\rVert", "‖"), ("\\Vert", "‖"), ("\\|", "‖"), ("\\lvert", "|"), ("\\rvert", "|"), ("\\vert", "|"), ("\\mid", " | "),
+            ("\\lfloor", "⌊"), ("\\rfloor", "⌋"), ("\\lceil", "⌈"), ("\\rceil", "⌉"), ("\\langle", "⟨"), ("\\rangle", "⟩"),
             ("\\lim", "lim"), ("\\sin", "sin"), ("\\cos", "cos"), ("\\tan", "tan"), ("\\ln", "ln"), ("\\log", "log"),
-            ("\\left", ""), ("\\right", ""), ("\\,", " "), ("\\;", " "), ("\\quad", "  "), ("\\!", ""),
+            ("\\exp", "exp"), ("\\max", "max"), ("\\min", "min"), ("\\arg", "arg"), ("\\det", "det"),
+            ("\\argmax", "argmax"), ("\\argmin", "argmin"),
+            ("\\qquad", "    "), ("\\quad", "  "), ("\\,", " "), ("\\;", " "), ("\\:", " "), ("\\!", ""), ("\\ ", " "),
+            ("\\%", "%"), ("\\&", "&"), ("\\#", "#"), ("\\_", "_"),
         };
+
+        // Dropped: sizing and spacing commands that have no plain-text meaning.
+        static readonly string[] Dropped =
+        {
+            "\\left", "\\right", "\\bigl", "\\bigr", "\\Bigl", "\\Bigr", "\\biggl", "\\biggr", "\\bigg", "\\Bigg", "\\big", "\\Big",
+            "\\displaystyle", "\\textstyle", "\\scriptstyle", "\\tiny", "\\small", "\\normalsize", "\\large", "\\Large", "\\limits",
+        };
+
+        // Wrappers whose argument is shown as is.
+        static readonly string[] Wrappers =
+        {
+            "\\text", "\\textrm", "\\textbf", "\\textit", "\\texttt", "\\textsf", "\\mathrm", "\\mathbf", "\\mathit", "\\mathsf",
+            "\\mathtt", "\\operatorname", "\\boldsymbol", "\\bm", "\\mathrel", "\\mathbin", "\\mathop", "\\underbrace", "\\overbrace",
+            "\\underline", "\\mbox", "\\hbox",
+        };
+
+        static readonly Dictionary<char, string> Script = new Dictionary<char, string>
+        { ['L'] = "ℒ", ['F'] = "ℱ", ['H'] = "ℋ", ['E'] = "ℰ", ['B'] = "ℬ", ['I'] = "ℐ", ['M'] = "ℳ", ['R'] = "ℛ" };
+        static readonly Dictionary<char, string> Blackboard = new Dictionary<char, string>
+        { ['R'] = "ℝ", ['N'] = "ℕ", ['Z'] = "ℤ", ['Q'] = "ℚ", ['C'] = "ℂ", ['P'] = "ℙ" };
+        static readonly (string, string)[] Accents =
+        { ("\\hat", "̂"), ("\\widehat", "̂"), ("\\bar", "̄"), ("\\overline", "̅"), ("\\tilde", "̃"), ("\\widetilde", "̃"), ("\\vec", "⃗"), ("\\dot", "̇"), ("\\ddot", "̈") };
 
         public static string ToText(string s)
         {
             if (string.IsNullOrEmpty(s)) return s;
-            s = s.Replace("$", "");
-            // \frac{a}{b} → (a)/(b)
+            s = s.Replace("$", "").Replace("\\{", "\u0001").Replace("\\}", "\u0002");
             s = s.Replace("\\tfrac", "\\frac").Replace("\\dfrac", "\\frac");
-            for (int guard = 0; guard < 20; guard++)
+            s = Matrices(s);
+            s = Command(s, "\\frac", 2, a => $"{Wrap(a[0])}/{Wrap(a[1])}");
+            s = Command(s, "\\sqrt", 1, a => "√" + Wrap(a[0]));
+            s = Command(s, "\\mathcal", 1, a => string.Concat(a[0].Select(ch => Script.TryGetValue(ch, out var r) ? r : ch.ToString())));
+            s = Command(s, "\\mathbb", 1, a => string.Concat(a[0].Select(ch => Blackboard.TryGetValue(ch, out var r) ? r : ch.ToString())));
+            s = Command(s, "\\xrightarrow", 1, a => $"<sup>{a[0]}</sup>→");
+            foreach (var (k, mark) in Accents)
+                s = Command(s, k, 1, a => string.Concat(a[0].Select(ch => ch == ' ' ? " " : ch + mark)));
+            foreach (var w in Wrappers) s = Command(s, w, 1, a => a[0]);
+            foreach (var (k, v) in Symbols.OrderByDescending(p => p.Item1.Length)) s = ReplaceCmd(s, k, v);
+            foreach (var d in Dropped.OrderByDescending(x => x.Length)) s = ReplaceCmd(s, d, "");
+            s = Scripts(s, '^', "<sup>", "</sup>");
+            s = Scripts(s, '_', "<sub>", "</sub>");
+            s = s.Replace("{", "").Replace("}", "").Replace("\\\\", "  ").Replace("\\", "");
+            return s.Replace("\u0001", "{").Replace("\u0002", "}");
+        }
+
+        static string Wrap(string x) => x.Length <= 1 || (x.All(char.IsLetterOrDigit) && x.Length <= 3) ? x : $"({x})";
+
+        /// <summary>Replace a command only where it isn't the start of a longer name (\in vs \infty).</summary>
+        static string ReplaceCmd(string s, string cmd, string with)
+        {
+            bool alpha = cmd.Length > 1 && char.IsLetter(cmd[cmd.Length - 1]);
+            var sb = new System.Text.StringBuilder();
+            int i = 0;
+            while (i < s.Length)
             {
-                int i = s.IndexOf("\\frac", StringComparison.Ordinal);
-                if (i < 0) break;
-                int j = i + 5;
-                string a = Group(s, ref j), b = Group(s, ref j);
-                if (a == null || b == null) break;
-                string wrap(string x) => x.Length <= 1 ? x : $"({x})";
-                s = s.Substring(0, i) + wrap(a) + "/" + wrap(b) + s.Substring(j);
+                int j = s.IndexOf(cmd, i, StringComparison.Ordinal);
+                if (j < 0) { sb.Append(s, i, s.Length - i); break; }
+                int end = j + cmd.Length;
+                if (alpha && end < s.Length && char.IsLetter(s[end])) { sb.Append(s, i, end - i); i = end; continue; }
+                sb.Append(s, i, j - i).Append(with);
+                i = end;
+                if (alpha && with.Length > 0 && char.IsLetter(with[with.Length - 1]) && i < s.Length && s[i] == ' ') { sb.Append(' '); i++; }
             }
-            foreach (var (k, v) in Symbols.OrderByDescending(p => p.Item1.Length)) s = s.Replace(k, v);
-            s = Script(s, '^', "<sup>", "</sup>");
-            s = Script(s, '_', "<sub>", "</sub>");
-            return s.Replace("{", "").Replace("}", "").Replace("\\", "");
+            return sb.ToString();
+        }
+
+        /// <summary>Rewrite each `\cmd{a}{b}…` (n arguments) with f.</summary>
+        static string Command(string s, string cmd, int n, Func<string[], string> f)
+        {
+            for (int guard = 0; guard < 200; guard++)
+            {
+                int i = -1;
+                for (int from = 0; ;)
+                {
+                    int j = s.IndexOf(cmd, from, StringComparison.Ordinal);
+                    if (j < 0) break;
+                    int end = j + cmd.Length;
+                    if (end < s.Length && char.IsLetter(s[end])) { from = end; continue; }
+                    i = j;
+                    break;
+                }
+                if (i < 0) break;
+                int k = i + cmd.Length;
+                var args = new string[n];
+                bool ok = true;
+                for (int a = 0; a < n && ok; a++) ok = (args[a] = Group(s, ref k)) != null;
+                if (!ok) { s = s.Remove(i, cmd.Length); continue; }
+                s = s.Substring(0, i) + f(args) + s.Substring(k);
+            }
+            return s;
+        }
+
+        /// <summary>\begin{pmatrix} a & b \\ c & d \end{pmatrix} → [a b; c d]; cases/aligned too.</summary>
+        static string Matrices(string s)
+        {
+            for (int guard = 0; guard < 50; guard++)
+            {
+                int i = s.IndexOf("\\begin{", StringComparison.Ordinal);
+                if (i < 0) break;
+                int nameEnd = s.IndexOf('}', i);
+                if (nameEnd < 0) break;
+                string env = s.Substring(i + 7, nameEnd - i - 7);
+                string endTag = "\\end{" + env + "}";
+                int j = s.IndexOf(endTag, nameEnd, StringComparison.Ordinal);
+                if (j < 0) { s = s.Remove(i, nameEnd - i + 1); continue; }
+                string body = s.Substring(nameEnd + 1, j - nameEnd - 1);
+                var rows = body.Split(new[] { "\\\\" }, StringSplitOptions.RemoveEmptyEntries).Select(r => string.Join("  ", r.Split('&').Select(c => c.Trim()))).Where(r => r.Length > 0);
+                string inner = string.Join("; ", rows);
+                string open = env.StartsWith("b") ? "[" : env.StartsWith("v") ? "|" : env == "cases" ? "{ " : env.StartsWith("p") ? "(" : "";
+                string close = env.StartsWith("b") ? "]" : env.StartsWith("v") ? "|" : env.StartsWith("p") ? ")" : "";
+                s = s.Substring(0, i) + open.Replace("{", "\u0001") + inner + close + s.Substring(j + endTag.Length);
+            }
+            return s;
         }
 
         static string Group(string s, ref int j)
         {
             while (j < s.Length && s[j] == ' ') j++;
             if (j >= s.Length) return null;
+            if (s[j] == '\\')
+            {
+                int st = j++;
+                while (j < s.Length && char.IsLetter(s[j])) j++;
+                if (j == st + 1 && j < s.Length) j++;
+                return s.Substring(st, j - st);
+            }
             if (s[j] != '{') return s[j++].ToString();
-            int depth = 0, st = j;
+            int depth = 0, start = j;
             for (; j < s.Length; j++)
             {
                 if (s[j] == '{') depth++;
-                else if (s[j] == '}' && --depth == 0) { j++; return s.Substring(st + 1, j - st - 2); }
+                else if (s[j] == '}' && --depth == 0) { j++; return s.Substring(start + 1, j - start - 2); }
             }
             return null;
         }
 
-        static string Script(string s, char mark, string open, string close)
+        static string Scripts(string s, char mark, string open, string close)
         {
             var sb = new System.Text.StringBuilder();
             for (int i = 0; i < s.Length; i++)

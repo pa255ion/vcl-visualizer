@@ -223,10 +223,13 @@ namespace Vcl.EditorTools
         // ── snapshot (no headset needed) ──
 
         /// <summary>Play IR lines (VCL_IR, one JSON object per line) to the end and save a PNG (VCL_SHOT).</summary>
+        /// <summary>Render lessons to PNGs. VCL_IR: one or more .jsonl files (':'-separated).
+        /// With VCL_SHOTS=DIR, every board (the scene before each `clear`, and the end)
+        /// becomes DIR/NAME-K.png; otherwise the end of the last file goes to VCL_SHOT.</summary>
         public static void Snapshot()
         {
-            string irPath = Env("VCL_IR") ?? throw new Exception("set VCL_IR");
-            string shot = Env("VCL_SHOT") ?? "snapshot.png";
+            string irList = Env("VCL_IR") ?? throw new Exception("set VCL_IR");
+            string shot = Env("VCL_SHOT") ?? "snapshot.png", dir = Env("VCL_SHOTS");
             int w = int.Parse(Env("VCL_W") ?? "1600"), h = int.Parse(Env("VCL_H") ?? "900");
             ImportTmp();
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -235,22 +238,66 @@ namespace Vcl.EditorTools
             var app = new GameObject("VCL").AddComponent<VclApp>();
             app.Cam = cam;
             app.Build();
-            foreach (var line in File.ReadAllLines(irPath))
-                if (line.Trim().Length > 0) app.Feed(line);
-            app.Runtime.Timeline.Flush();
-            app.FitCamera();
-            app.Runtime.Update(0);
-            app.Avatar.Update(0.01f, cam.transform.position);
-            foreach (var t in UnityEngine.Object.FindObjectsOfType<TMP_Text>()) t.ForceMeshUpdate(true, true);
-            var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
-            cam.targetTexture = rt;
-            cam.Render();
-            RenderTexture.active = rt;
-            var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
-            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
-            tex.Apply();
-            File.WriteAllBytes(shot, tex.EncodeToPNG());
-            Debug.Log($"[vcl] snapshot {shot}: {app.Runtime.Entities.Count} entities");
+            void Render(string path)
+            {
+                app.Runtime.Timeline.Flush();
+                app.FitCamera();
+                app.Runtime.Update(0);
+                app.Avatar.Update(0.01f, cam.transform.position);
+                foreach (var t in UnityEngine.Object.FindObjectsOfType<TMP_Text>()) t.ForceMeshUpdate(true, true);
+                var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
+                cam.targetTexture = rt;
+                cam.Render();
+                RenderTexture.active = rt;
+                var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                tex.Apply();
+                File.WriteAllBytes(path, tex.EncodeToPNG());
+                cam.targetTexture = null;
+                RenderTexture.active = null;
+                rt.Release();
+                Debug.Log($"[vcl] snapshot {path}: {app.Runtime.Entities.Count} entities");
+            }
+            foreach (var irPath in irList.Split(':'))
+            {
+                app.Runtime.Reset();
+                app.Board.Apply(Board.Default);
+                string name = Path.GetFileNameWithoutExtension(irPath);
+                int k = 0;
+                foreach (var line in File.ReadAllLines(irPath))
+                {
+                    if (line.Trim().Length == 0) continue;
+                    if (dir != null && line.Contains("\"op\":\"clear\""))
+                    {
+                        app.Runtime.Timeline.Flush();
+                        if (app.Runtime.Entities.Count > 0) Render(Path.Combine(dir, $"{name}-{++k}.png"));
+                    }
+                    app.Feed(line);
+                }
+                Render(dir != null ? Path.Combine(dir, $"{name}-{++k}.png") : shot);
+            }
+            // VCL_MENU=1: the lesson menu over the last board, with sample entries.
+            if (Env("VCL_MENU") != null && dir != null)
+            {
+                var m = app.Menu;
+                m.Refresh = null;
+                m.Lessons = new List<LessonInfo>
+                {
+                    new LessonInfo { Path = "lessons/garden.vcl", Title = "Lissajous garden", Folder = "Built-in lessons" },
+                    new LessonInfo { Path = "library/u01/01.md", Title = "Lesson 1.1 — What is learning? A model, a loss, and data", Folder = "u01-learning-machines" },
+                    new LessonInfo { Path = "library/u01/02.md", Title = "Lesson 1.2 — Gradient descent: walking downhill on the loss", Folder = "u01-learning-machines" },
+                    new LessonInfo { Path = "library/u02/03.md", Title = "Lesson 2.3 — Relaxation: inference as gradient descent on the states", Folder = "u02-predictive-coding" },
+                };
+                m.Status = "4 lessons from http://127.0.0.1:8093";
+                m.Toggle(cam.transform);
+                Render(Path.Combine(dir, "menu-1.png"));
+                m.Key(1, false);
+                m.Key(1, false);
+                m.Key(1, false);
+                m.Key(0, true); // into the first folder
+                m.Key(2, false);
+                Render(Path.Combine(dir, "menu-2.png"));
+            }
         }
     }
 }

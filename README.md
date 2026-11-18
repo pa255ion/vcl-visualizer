@@ -56,6 +56,11 @@ Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
 go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then
 at `assets/<name>`, and the tutor tells Claude which ones exist.
 
+A folder of lessons elsewhere (`.vcl` files, and `.md` files with ```` ```vcl ````
+fences) can be served alongside with `vcl serve --lessons DIR`: they appear in
+the web page's lesson list and the Quest app's menu, grouped by subfolder
+(`GET /library/index.json` lists them, `/library/<path>` serves each).
+
 Feed it from anywhere:
 
 ```sh
@@ -188,9 +193,8 @@ node --test viewer/test/*.test.mjs    # expression compiler, scheduler
   synthesis in a worker for long bursts of speech.
 * A rigged avatar, interacting with entities in VR (grab or ask about a thing),
   `morph` between shapes, and a binary wire format.
-* The Unity client covers the core ops but not yet images, SVG, models,
-  circuits, blocks, code, tables, timing diagrams, charts or `nn`/`grid`/`bits`
-  diagrams (see its README).
+* The Unity client draws every op except `svg` and `model`, and has no voice
+  yet (see its README).
 
 ## Credits
 
