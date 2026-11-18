@@ -259,6 +259,26 @@ namespace Vcl
         // ── meshes ──
 
         /// <summary>Flat filled polygon (ear clipping), z from the first point.</summary>
+        /// <summary>The unique triangle edges of a mesh as a line mesh (sharing its vertex order).</summary>
+        public static Mesh Wireframe(Mesh src)
+        {
+            var tris = src.triangles;
+            var seen = new HashSet<long>();
+            var idx = new List<int>();
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+                for (int k = 0; k < 3; k++)
+                {
+                    int a = tris[i + k], b = tris[i + (k + 1) % 3];
+                    long key = ((long)Mathf.Min(a, b) << 32) | (uint)Mathf.Max(a, b);
+                    if (seen.Add(key)) { idx.Add(a); idx.Add(b); }
+                }
+            var m = new Mesh { name = "wire", indexFormat = src.indexFormat };
+            m.vertices = src.vertices;
+            m.SetIndices(idx, MeshTopology.Lines, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
         public static Mesh Fill(List<Vector3> pts)
         {
             var p = new List<Vector3>(pts);
@@ -397,13 +417,13 @@ namespace Vcl
         static TMP_FontAsset font, mono;
 
         /// <summary>A dynamic SDF font asset made at runtime from a TTF in Resources/Fonts.</summary>
-        static TMP_FontAsset Dynamic(string name)
+        public static TMP_FontAsset Dynamic(string name)
         {
             var ttf = Resources.Load<Font>("Fonts/" + name);
             return ttf ? TMP_FontAsset.CreateFontAsset(ttf, 72, 7, UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA, 1024, 1024) : null;
         }
 
-        /// <summary>LiberationSans, falling back to DejaVu Sans for what it lacks (⊕ ≪ ₀ ᴸ …).</summary>
+        /// <summary>LiberationSans, falling back to DejaVu Sans, then Serif, for what it lacks (⊕ ≪ ₀ ᴸ ℒ …).</summary>
         public static TMP_FontAsset Font
         {
             get
@@ -411,11 +431,13 @@ namespace Vcl
                 if (font) return font;
                 font = Resources.Load<TMP_FontAsset>("Fonts & Materials/LiberationSans SDF");
                 var fb = Dynamic("DejaVuSans");
+                var serif = Dynamic("DejaVuSerif"); // has the letterlike symbols Sans lacks (ℒ)
                 if (font && fb)
                 {
                     font.fallbackFontAssetTable ??= new List<TMP_FontAsset>();
-                    font.fallbackFontAssetTable.RemoveAll(f => f == null || f.name.StartsWith("DejaVuSans"));
+                    font.fallbackFontAssetTable.RemoveAll(f => f == null || f.name.StartsWith("DejaVu"));
                     font.fallbackFontAssetTable.Add(fb);
+                    if (serif) font.fallbackFontAssetTable.Add(serif);
                 }
                 return font;
             }

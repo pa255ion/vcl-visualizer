@@ -29,7 +29,7 @@ namespace Vcl
         }
 
         const float Scale = 0.05f;         // panel units → metres
-        const float W = 20, H = 16, RowH = 1.12f;
+        const float W = 22, H = 16, RowH = 1.12f;
         const int PerPage = 9;
 
         public bool Open => root && root.gameObject.activeSelf;
@@ -38,8 +38,8 @@ namespace Vcl
 
         // What the app does for us.
         public Action<LessonInfo> Play;
-        public Action Stop, ToggleStep, Upright, Recline, Refresh;
-        public Func<bool> Stepping, Reclined;
+        public Action Stop, ToggleStep, ToggleVoice, Upright, Recline, Refresh;
+        public Func<bool> Stepping, Reclined, Voiced;
 
         Transform root, content;
         readonly List<Button> buttons = new List<Button>();
@@ -107,10 +107,11 @@ namespace Vcl
             float top = H / 2 - 0.9f, left = -W / 2 + 0.7f, right = W / 2 - 0.7f;
 
             // Header: where we are, and the actions.
-            Label(folder == null ? "Lessons" : folder, new Vector3(left, top, 0), 0.95f, Draw.FG, "left", true);
+            Label(folder == null ? "Lessons" : Short(folder, 14), new Vector3(left, top, 0), 0.95f, Draw.FG, "left", true);
             float x = right;
             x = ActionButton(x, top, Reclined() ? "Upright" : "Recline", () => { if (Reclined()) Upright(); else Recline(); Rebuild(); });
             x = ActionButton(x, top, Stepping() ? "Step: on" : "Step: off", () => { ToggleStep(); Rebuild(); });
+            x = ActionButton(x, top, Voiced() ? "Voice: on" : "Voice: off", () => { ToggleVoice(); Rebuild(); });
             ActionButton(x, top, "Stop", () => { Stop(); Rebuild(); });
 
             // Rows: folders, or the lessons of one folder.

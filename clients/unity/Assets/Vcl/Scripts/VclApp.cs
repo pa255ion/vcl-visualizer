@@ -56,7 +56,6 @@ namespace Vcl
             Debug.Log($"[vcl] server {url}");
             conn = new Connection(url);
             Runtime.Stepping = PlayerPrefs.GetInt("vcl.step", 0) == 1;
-            Runtime.LoadTexture = (u, done) => LoadTexture(u, done);
             reclined = PlayerPrefs.GetInt("vcl.recline", 0) == 1;
             FetchLessons();
         }
@@ -119,16 +118,31 @@ namespace Vcl
             if (tellServer) _ = http.PostAsync(HttpBase + "/vcl?mode=vcl", new StringContent("clear\nboard\n"));
         }
 
-        async void LoadTexture(string url, System.Action<Texture2D> done)
+        void LoadTexture(string url, System.Action<Texture2D> done) => LoadBytes(url, bytes =>
         {
+            var tex = new Texture2D(2, 2);
+            done(bytes != null && tex.LoadImage(bytes) ? tex : null);
+        });
+
+        /// <summary>Where lesson files are read from directly (the editor snapshot test
+        /// points it at viewer/); otherwise they come from the server over HTTP.</summary>
+        public string AssetRoot;
+
+        async void LoadBytes(string url, System.Action<byte[]> done)
+        {
+            byte[] bytes = null;
             try
             {
-                var full = url.StartsWith("http") ? url : $"{HttpBase}/{url.TrimStart('/')}";
-                var bytes = await http.GetByteArrayAsync(full);
-                var tex = new Texture2D(2, 2);
-                done(tex.LoadImage(bytes) ? tex : null);
+                if (AssetRoot != null && !url.StartsWith("http") && System.IO.File.Exists(System.IO.Path.Combine(AssetRoot, url)))
+                    bytes = System.IO.File.ReadAllBytes(System.IO.Path.Combine(AssetRoot, url));
+                else
+                {
+                    var full = url.StartsWith("http") ? url : $"{HttpBase}/{url.TrimStart('/')}";
+                    bytes = await http.GetByteArrayAsync(full);
+                }
             }
-            catch (System.Exception) { done(null); }
+            catch (System.Exception e) { Debug.LogWarning($"[vcl] fetch {url}: {e.Message}"); }
+            done(bytes);
         }
 
         /// <summary>Everything except the connection (also used by the editor snapshot test).</summary>
@@ -193,6 +207,8 @@ namespace Vcl
             status.renderer.sortingOrder = 6;
 
             Runtime = new Runtime(stage, Board, Avatar, Cam, Log);
+            Runtime.LoadTexture = (u, done) => LoadTexture(u, done);
+            Runtime.LoadBytes = (u, done) => LoadBytes(u, done);
             Menu = new Menu
             {
                 Play = PlayLesson,
@@ -203,7 +219,10 @@ namespace Vcl
                 Upright = () => SetReclined(false),
                 Recline = () => SetReclined(true),
                 Refresh = FetchLessons,
+                Voiced = () => Avatar.Voice.On,
+                ToggleVoice = () => Avatar.Voice.SetOn(!Avatar.Voice.On),
             };
+            if (!Cam.GetComponent<AudioListener>()) Cam.gameObject.AddComponent<AudioListener>();
             xr = XRSettings.isDeviceActive;
             if (xr)
             {

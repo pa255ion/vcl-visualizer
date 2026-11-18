@@ -193,8 +193,6 @@ node --test viewer/test/*.test.mjs    # expression compiler, scheduler
   synthesis in a worker for long bursts of speech.
 * A rigged avatar, interacting with entities in VR (grab or ask about a thing),
   `morph` between shapes, and a binary wire format.
-* The Unity client draws every op except `svg` and `model`, and has no voice
-  yet (see its README).
 
 ## Credits
 

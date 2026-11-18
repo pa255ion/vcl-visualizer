@@ -257,6 +257,14 @@ namespace Vcl
             if (!instant && !Timeline.Busy) saysInBurst = 0; // a new burst (lesson run, tutor reply)
             if (op == "say" && !instant)
             {
+                // Speak it: the say lasts as long as its audio.
+                var spoken = Avatar?.Voice.Prepare(cmd.Str("text"));
+                if (spoken.HasValue)
+                {
+                    var (clip, dur) = spoken.Value;
+                    task.Dur = dur;
+                    task.Begin = () => Avatar.Say(cmd.Str("text"), (float)dur, clip);
+                }
                 task.Gate = Stepping && !cmd.Par && saysInBurst > 0;
                 saysInBurst++;
             }
@@ -275,6 +283,7 @@ namespace Vcl
         {
             Timeline.Reset();
             saysInBurst = 0;
+            Avatar?.Voice.Stop();
             foreach (var id in new List<string>(Entities.Keys)) Remove(id);
             Avatar?.Point(null, 0);
         }

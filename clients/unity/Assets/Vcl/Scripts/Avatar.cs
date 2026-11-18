@@ -12,6 +12,7 @@ namespace Vcl
         static readonly Color Skin = Draw.Hex("#dfe7f1"), Suit = Draw.Hex("#2b3a52"), Glow = Draw.Hex("#7fe3ff");
 
         public readonly Transform Root, SubRoot;
+        public readonly Voice Voice;
         readonly Transform body, head, mouth, bulb;
         readonly Transform[] eyes, hands;
         readonly Vector3[] handRest;
@@ -61,6 +62,7 @@ namespace Vcl
             mouth.localRotation = Quaternion.Euler(0, 0, 90);
             Prim(head, PrimitiveType.Cylinder, Std(Skin), new Vector3(0, 0.2f, 0), new Vector3(0.012f, 0.045f, 0.012f));
             bulb = Prim(head, PrimitiveType.Sphere, glow, new Vector3(0, 0.255f, 0), Vector3.one * 0.044f);
+            Voice = new Voice(head);
 
             handRest = new[] { new Vector3(-0.27f, 1.0f, -0.05f), new Vector3(0.27f, 1.0f, -0.05f) };
             hands = new[]
@@ -99,9 +101,10 @@ namespace Vcl
             Subtitle(text, 4);
         }
 
-        public void Say(string text, float dur)
+        public void Say(string text, float dur, AudioClip clip = null)
         {
             thinking = false;
+            if (clip) Voice.Play(clip);
             subColor = Draw.Hex("#f5f7fa");
             speakUntil = t + dur;
             Subtitle(text, dur + 0.8f);
@@ -170,8 +173,9 @@ namespace Vcl
                 dot.localScale = Vector3.one * 0.036f * (1 + 0.25f * Mathf.Sin(t * 8));
             }
 
-            bool speaking = t < speakUntil;
-            float talk = speaking ? 0.5f + 0.5f * Mathf.Abs(Mathf.Sin(t * 13) * Mathf.Sin(t * 4.7f)) : 0;
+            bool speaking = t < speakUntil || Voice.Speaking;
+            float talk = Voice.Speaking ? Voice.Level()
+                : speaking ? 0.5f + 0.5f * Mathf.Abs(Mathf.Sin(t * 13) * Mathf.Sin(t * 4.7f)) : 0;
             mouth.localScale = new Vector3(0.016f * (1 + talk * 3), 0.034f, 0.01f);
             bulb.localScale = Vector3.one * 0.044f * (1 + (speaking ? 0.3f * Mathf.Abs(Mathf.Sin(t * 6)) : thinking ? 0.45f * (0.5f + 0.5f * Mathf.Sin(t * 5)) : 0));
 

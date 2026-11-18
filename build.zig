@@ -64,6 +64,37 @@ pub fn build(b: *std.Build) void {
     b.step("wasm", "Build viewer/vcl.wasm and viewer/tts.wasm").dependOn(&copy.step);
     b.getInstallStep().dependOn(&copy.step);
 
+    // Speech for the Unity client: libtts.so for the Quest (Android arm64) and
+    // the Linux editor, no libc, so one ELF loads on both bionic and glibc.
+    const unity_copy = b.addUpdateSourceFiles();
+    for ([_]struct { arch: std.Target.Cpu.Arch, dir: []const u8 }{
+        .{ .arch = .aarch64, .dir = "clients/unity/Assets/Plugins/Android/arm64-v8a/libtts.so" },
+        .{ .arch = .x86_64, .dir = "clients/unity/Assets/Plugins/x86_64/libtts.so" },
+    }) |t| {
+        const nt = b.resolveTargetQuery(.{ .cpu_arch = t.arch, .os_tag = .linux, .abi = .none });
+        const lib = b.addLibrary(.{
+            .name = "tts",
+            .linkage = .dynamic,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("core/src/tts_native.zig"),
+                .target = nt,
+                .optimize = .ReleaseFast,
+                .pic = true,
+                .single_threaded = true, // no TLS segment
+                .strip = true,
+                .imports = &.{.{ .name = "tts", .module = b.createModule(.{
+                    .root_source_file = tts_dep.path("src/tts.zig"),
+                    .target = nt,
+                    .optimize = .ReleaseFast,
+                    .pic = true,
+                    .single_threaded = true,
+                }) }},
+            }),
+        });
+        unity_copy.addCopyFileToSource(lib.getEmittedBin(), t.dir);
+    }
+    b.step("unity-tts", "Build libtts.so for the Unity client (Quest and Linux editor)").dependOn(&unity_copy.step);
+
     // Tests
     const tests = b.addTest(.{ .root_module = vcl });
     b.step("test", "Run parser tests").dependOn(&b.addRunArtifact(tests).step);

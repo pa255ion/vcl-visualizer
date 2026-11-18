@@ -34,6 +34,7 @@ namespace Vcl.EditorTools
             ImportTmp();
             ConfigurePlayer();
             ConfigureXR();
+            ConfigurePlugins();
             CreateScene();
             AssetDatabase.SaveAssets();
             Debug.Log("[vcl] setup done");
@@ -118,6 +119,34 @@ namespace Vcl.EditorTools
                 var p = so.FindProperty("activeInputHandler");
                 if (p != null) { p.intValue = 2; so.ApplyModifiedProperties(); }
             }
+        }
+
+        /// <summary>libtts.so (speech, built by `zig build unity-tts`): the arm64 one goes
+        /// into the Quest build, the x86_64 one is for the Linux editor (snapshots).</summary>
+        static void ConfigurePlugins()
+        {
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            void Set(string path, Action<PluginImporter> f)
+            {
+                if (!(AssetImporter.GetAtPath(path) is PluginImporter p)) { Debug.LogWarning($"[vcl] no plugin at {path}: run `zig build unity-tts`"); return; }
+                p.SetCompatibleWithAnyPlatform(false);
+                f(p);
+                p.SaveAndReimport();
+            }
+            Set("Assets/Plugins/Android/arm64-v8a/libtts.so", p =>
+            {
+                p.SetCompatibleWithEditor(false);
+                p.SetCompatibleWithPlatform(BuildTarget.Android, true);
+                p.SetPlatformData(BuildTarget.Android, "CPU", "ARM64");
+            });
+            Set("Assets/Plugins/x86_64/libtts.so", p =>
+            {
+                p.SetCompatibleWithPlatform(BuildTarget.Android, false);
+                p.SetCompatibleWithEditor(true);
+                p.SetEditorData("OS", "Linux");
+                p.SetEditorData("CPU", "x86_64");
+                p.SetCompatibleWithPlatform(BuildTarget.StandaloneLinux64, true);
+            });
         }
 
         static void ConfigureXR()
@@ -222,7 +251,6 @@ namespace Vcl.EditorTools
 
         // ── snapshot (no headset needed) ──
 
-        /// <summary>Play IR lines (VCL_IR, one JSON object per line) to the end and save a PNG (VCL_SHOT).</summary>
         /// <summary>Render lessons to PNGs. VCL_IR: one or more .jsonl files (':'-separated).
         /// With VCL_SHOTS=DIR, every board (the scene before each `clear`, and the end)
         /// becomes DIR/NAME-K.png; otherwise the end of the last file goes to VCL_SHOT.</summary>
@@ -238,6 +266,10 @@ namespace Vcl.EditorTools
             var app = new GameObject("VCL").AddComponent<VclApp>();
             app.Cam = cam;
             app.Build();
+            app.AssetRoot = Env("VCL_ASSETS") ?? Path.GetFullPath("../../viewer"); // lesson files (svg, models) from disk
+            var spoken = app.Avatar.Voice.Prepare("Testing the voice.");
+            Debug.Log($"[vcl] voice: {(spoken.HasValue ? $"{spoken.Value.dur:F2} s of speech" : "none: " + (app.Avatar.Voice.Error ?? "off"))}");
+            if (Env("VCL_TEXDBG") != null) Debug.Log("[vcl] tex metrics: " + MathTex.DebugMetrics("x()W⊤∗+ℒ"));
             void Render(string path)
             {
                 app.Runtime.Timeline.Flush();

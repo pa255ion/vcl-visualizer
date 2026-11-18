@@ -26,7 +26,7 @@ namespace Vcl
                 case "circle": BuildCircle(e, c); break;
                 case "angle": BuildAngle(e, c); break;
                 case "text": TextEntity(e, c, 0.5f); break;
-                case "tex": TextEntity(e, c.With("text", Tex.ToText(c.Str("text"))), 0.5f, bold: false); break;
+                case "tex": BuildTex(e, c); break;
                 case "title": TextEntity(e, c.With("at", new List<object> { 0.0, (double)((Board?.Height ?? 9) / 2 - 0.65f), 0.0 }).With("size", 0.62), 0.62f); break;
                 case "node": BuildNode(e, c); break;
                 case "edge": BuildEdge(e, c); break;
@@ -53,6 +53,8 @@ namespace Vcl
                 case "errbar": BuildErrbar(e, c); break;
                 case "band": BuildBand(e, c); break;
                 case "contour": BuildContour(e, c); break;
+                case "svg": BuildSvg(e, c); break;
+                case "model": BuildModel(e, c); break;
                 default: BuildPlaceholder(e, c); break;
             }
         }
@@ -435,10 +437,11 @@ namespace Vcl
 
         MeshRenderer Solid(Entity e, Cmd c, Mesh mesh)
         {
-            var mat = e.Track(Draw.Lit(Draw.Hex(c.Str("color") ?? Palette[0])), "solid");
-            var r = Draw.MeshObject(e.Body, "solid", mesh, mat, 0);
-            if (c.Bool("wire")) mat.SetFloat("_Glossiness", 0.1f); // no wireframe on mobile GPUs; see README
-            return r;
+            var color = Draw.Hex(c.Str("color") ?? Palette[0]);
+            // wire=true: the edges only, as three.js's wireframe material draws them.
+            if (c.Bool("wire")) return Draw.MeshObject(e.Body, "wire", Draw.Wireframe(mesh), e.Track(Draw.Unlit(color, 3002), "solid"), 0);
+            var mat = e.Track(Draw.Lit(color), "solid");
+            return Draw.MeshObject(e.Body, "solid", mesh, mat, 0);
         }
 
         void BuildBox(Entity e, Cmd c)
@@ -659,12 +662,11 @@ namespace Vcl
             mesh.triangles = tris.ToArray();
             var mat = e.Track(Draw.Lit(Color.white, doubleSided: true, smooth: 0.4f), "fill", 0.92f);
             Draw.MeshObject(e.Body, "surf", mesh, mat, 0);
-            Stroke wire = null;
+            Mesh wire = null;
             if (c.Bool("wire"))
             {
-                wire = new Stroke(e.Body, Draw.Hex("#0b0f16"), 0.02f, false, true);
-                e.Strokes.Add(wire);
-                e.Track(wire.Material, "stroke", 0.35f);
+                wire = Draw.Wireframe(mesh);
+                Draw.MeshObject(e.Body, "wire", wire, e.Track(Draw.Unlit(Draw.Hex("#0b0f16"), 3002), "stroke", 0.35f), 1);
             }
             e.Render = p =>
             {
@@ -679,11 +681,8 @@ namespace Vcl
                 mesh.RecalculateBounds();
                 if (wire != null)
                 {
-                    int stride = Mathf.Max(1, n / 16);
-                    var lines = new List<List<Vector3>>();
-                    for (int j = 0; j <= n; j += stride) lines.Add(Enumerable.Range(0, N).Select(i => verts[j * N + i]).ToList());
-                    for (int i = 0; i <= n; i += stride) lines.Add(Enumerable.Range(0, N).Select(j => verts[j * N + i]).ToList());
-                    wire.Set(lines);
+                    wire.vertices = verts;
+                    wire.RecalculateBounds();
                 }
                 e.Factor["fill"] = 1;
             };

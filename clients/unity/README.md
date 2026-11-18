@@ -11,6 +11,24 @@ It is a C# port of the web viewer's runtime (`viewer/js/runtime.js`,
 blocks and step mode), anchors, entrance effects and change ops. The server
 samples `plot` and `surf` itself, so no client needs an expression evaluator.
 
+Where the browser lends the web viewer a hand, this client does the work
+itself:
+
+* **Voice:** tts-lab, the same formant synthesizer as the web viewer's robot
+  voice, built by Zig as a native library (`libtts.so` for the Quest's arm64
+  and for the Linux editor; `nix develop -c zig build unity-tts`). Each `say`
+  is synthesized as it arrives (a few ms) and lasts exactly as long as its
+  audio, played from the teacher's head.
+* **`tex`:** typeset by a small TeX-style layout engine (`Math.cs`) in DejaVu
+  Serif: fractions, scripts, radicals, big operators with limits, `\left…\right`
+  and `\big` delimiters, accents, braces, matrices and `cases`/`aligned`, with
+  TeX's spacing between atoms. MathJax isn't available in Unity.
+* **`svg`:** parsed and drawn as meshes (`Svg.cs`): paths (arcs included),
+  basic shapes, text, fill/stroke/opacity, transforms and `style`. Gradients
+  draw as a flat grey; holes in a fill are not cut.
+* **`model`:** glTF/GLB, STL and OBJ are read by `Model.cs` (meshes, node tree,
+  base colour and texture); no skins, animation or Draco compression.
+
 ## Build and install
 
 You need the `unity` editor from the NixOS config (it pins 2022.3.22f1 with
@@ -48,6 +66,9 @@ Wi-Fi carries the port forward instead (needs the cable once per headset boot):
 | Step mode on/off | B or Y | S |
 | Recentre | thumbstick click | |
 | Upright ↔ reclined | hold thumbstick click (0.8 s) | |
+
+The menu also has a **Voice** switch (robot voice or subtitles only), which is
+remembered.
 
 The **menu** lists the server's built-in lessons and its `--lessons` library,
 one folder per subfolder; point with either controller and pull the trigger.
@@ -90,31 +111,34 @@ VCL_IR=/tmp/garden.jsonl VCL_SHOT=/tmp/garden.png \
   tools/unity.sh -batchmode -quit -executeMethod Vcl.EditorTools.VclBuild.Snapshot -logFile -
 ```
 
-It needs a display for the GPU context (no `-nographics`).
+It needs a display for the GPU context (no `-nographics`). Files a lesson
+names (`svg`, `model`, `img`) are read from `viewer/` (or `VCL_ASSETS=DIR`),
+and the log says whether the speech library loaded (`[vcl] voice: …`).
 
 ## Layout
 
 ```
-Assets/Vcl/Scripts/   Runtime.cs (entities, pins, parts, change ops) · Builders.cs (shapes, text, axes, LaTeX → text)
+Assets/Vcl/Scripts/   Runtime.cs (entities, pins, parts, change ops) · Builders.cs (shapes, text, axes, solids)
+                      Math.cs (tex typesetting) · Svg.cs · Model.cs (glTF, STL, OBJ) · Voice.cs (tts-lab speech)
                       Diagrams.cs (part, wire, block, frame, code, table, wave, img) · Charts.cs (nn, grid,
                       bits, bars, hist, scatter, errbar, band, contour) · Parts.cs (symbols, wire routing)
                       Panels.cs (syntax highlighting, wave parsing) · Timeline.cs · Board.cs · Avatar.cs
                       Draw.cs (strokes, fills, text, fonts) · Json.cs · Connection.cs (WebSocket)
                       Menu.cs (lesson menu) · VclApp.cs (scene, input, headset, lessons over HTTP)
 Assets/Vcl/Resources/ VclUnlit.shader (stereo-instancing safe) · VclLit.shader
-                      Fonts/ DejaVu Sans (+ Mono): fallback glyphs and code panels
+                      Fonts/ DejaVu Sans (+ Mono, Serif): fallback glyphs, code panels, maths
+Assets/Plugins/       libtts.so (arm64-v8a for the Quest, x86_64 for the editor), from `zig build unity-tts`
 Assets/Vcl/Editor/    VclBuild.cs (Setup, Quest, Snapshot)
 tools/                unity.sh · build-quest.sh · install-quest.sh
 ```
 
-## Not drawn yet
+## Differences from the web viewer
 
-- **`svg` and `model`:** play as a dimmed `[op]` placeholder, so a lesson still
-  runs through, and the status line notes each one.
-- **`tex`:** shown as text with Unicode symbols and sub/superscripts
-  (fractions as a/b, matrices as (a b; c d)), not typeset.
-- **Speech:** there is no voice yet; the subtitles carry the text.
-- **`surf … wire=true`:** draws grid lines rather than a true wireframe.
+- **Voice:** the robot voice only; there is no system speech engine on the
+  Quest to match the web viewer's "browser" voice.
+- **Lip-sync** follows loudness, as on the web.
+- **`tex`** covers what lessons use; an unknown command shows as `\name` so it
+  is noticed rather than silently dropped.
 
 Unity's OpenXR plugin can't target Linux desktops, so this client doesn't run
 through WiVRn. A Godot client would be the way to do that.
