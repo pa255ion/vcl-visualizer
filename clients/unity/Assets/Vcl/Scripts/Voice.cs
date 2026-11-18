@@ -13,7 +13,11 @@ namespace Vcl
 {
     public class Voice
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        const string Lib = "libtts.so"; // IL2CPP on Android dlopens the name as given
+#else
         const string Lib = "tts";
+#endif
         [DllImport(Lib)] static extern int tts_speak(byte[] text, UIntPtr n, uint engine, float rate, float pitch);
         [DllImport(Lib)] static extern IntPtr tts_samples();
         [DllImport(Lib)] static extern UIntPtr tts_len();
@@ -55,15 +59,35 @@ namespace Vcl
             try
             {
                 var bytes = Encoding.UTF8.GetBytes(Speakable(text));
-                if (tts_speak(bytes, (UIntPtr)bytes.Length, RefinedFormant, Rate, Pitch) != 0) return null;
-                int n = (int)tts_len();
-                uint rate = tts_sample_rate();
-                if (n == 0 || rate == 0) return null;
-                var samples = new float[n];
-                Marshal.Copy(tts_samples(), samples, 0, n);
+                // The synthesizer keeps big buffers on the stack: more than Unity's
+                // main thread has on Android. Run it on a thread with room, and wait
+                // (a few ms per sentence).
+                float[] samples = null;
+                uint rate = 0;
+                double secs = 0;
+                Exception err = null;
+                var worker = new System.Threading.Thread(() =>
+                {
+                    try
+                    {
+                        if (tts_speak(bytes, (UIntPtr)bytes.Length, RefinedFormant, Rate, Pitch) != 0) return;
+                        int len = (int)tts_len();
+                        rate = tts_sample_rate();
+                        secs = tts_seconds();
+                        if (len == 0 || rate == 0) return;
+                        samples = new float[len];
+                        Marshal.Copy(tts_samples(), samples, 0, len);
+                    }
+                    catch (Exception e) { err = e; }
+                }, 16 << 20);
+                worker.Start();
+                worker.Join();
+                if (err != null) throw err;
+                if (samples == null) return null;
+                int n = samples.Length;
                 var clip = AudioClip.Create("say", n, 1, (int)rate, false);
                 clip.SetData(samples, 0);
-                return (clip, tts_seconds() + 0.25);
+                return (clip, secs + 0.25);
             }
             catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
             {

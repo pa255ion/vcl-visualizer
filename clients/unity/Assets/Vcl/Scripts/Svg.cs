@@ -32,7 +32,7 @@ namespace Vcl
                     if (e.Label) e.Label.transform.localPosition = new Vector3(0, -r.height / 2 - 0.3f, 0);
                 });
                 try { redraw(); }
-                catch (Exception ex) { Log("warning", $"line {c.Line}: svg: {ex.Message}"); }
+                catch (Exception ex) { Log("warning", $"line {c.Line}: svg: {ex.Message}"); Debug.LogException(ex); }
             }
             LabelFor(e, c, new Vector3(0, -width / 3, 0));
             if (src.TrimStart().StartsWith("<")) Show(src);

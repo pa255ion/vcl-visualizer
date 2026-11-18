@@ -1,0 +1,4 @@
+<!-- Keep what svg parsing needs through IL2CPP's managed code stripping. -->
+<linker>
+  <assembly fullname="System.Xml" preserve="all"/>
+</linker>

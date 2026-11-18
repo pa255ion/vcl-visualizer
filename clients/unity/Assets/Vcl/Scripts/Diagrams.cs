@@ -244,6 +244,10 @@ namespace Vcl
                 }
                 box = Draw.Child(e.Body, "panel").transform;
                 int t0 = e.Tints.Count, s0 = e.Strokes.Count;
+                // Build with the body active (it is hidden at opacity 0, e.g. when a file
+                // arrives before the entrance): TextMeshPro set up while inactive breaks.
+                // ApplyOpacity below hides it again if it should be.
+                e.Body.gameObject.SetActive(true);
                 build(box);
                 mine.AddRange(e.Tints.GetRange(t0, e.Tints.Count - t0));
                 mineStrokes.AddRange(e.Strokes.GetRange(s0, e.Strokes.Count - s0));

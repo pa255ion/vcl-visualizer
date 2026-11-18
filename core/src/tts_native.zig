@@ -11,11 +11,17 @@
 const std = @import("std");
 const tts = @import("tts");
 
-// One heap for the synth, no thread-locals: a dlopen'd library with a TLS
-// segment and no libc is asking for trouble on Android's loader. Unity calls
-// from its main thread only.
-var heap: std.heap.DebugAllocator(.{ .thread_safe = false, .safety = false }) = .init;
-const gpa = heap.allocator();
+// Whole pages from the kernel, no thread-locals. Inside Unity's process on the
+// Quest, a general-purpose heap here crashed writing just past a block (static
+// test programs on the same headset ran clean, where the next page happened to
+// be mapped); page-granular blocks leave the slack that tolerates it.
+const gpa = std.heap.page_allocator;
+
+// A fixed page size, so std never asks the kernel's auxiliary vector at run
+// time: that goes through `getauxval`, which a libc-free library has nobody to
+// provide (Android's loader won't find bionic's for it). The Quest's pages are
+// 4 KiB, as are x86_64's.
+pub const std_options: std.Options = .{ .page_size_min = 4096, .page_size_max = 4096 };
 
 var synth: ?*tts.Synth = null;
 var last: ?tts.Result = null;
@@ -59,4 +65,44 @@ export fn tts_sample_rate() u32 {
     const r = last orelse return 0;
     if (r.audio_seconds <= 0) return 0;
     return @intFromFloat(@round(@as(f64, @floatFromInt(r.samples.len)) / r.audio_seconds));
+}
+
+
+// std still looks up the vDSO (for clocks) through an external `getauxval`.
+// A libc-free library has nobody to provide it, and Android's loader won't
+// bind it to bionic's, so read /proc/self/auxv. Returning 0 is safe: std then
+// falls back to plain system calls.
+var auxv: [64]usize = undefined;
+var auxv_len: usize = 0;
+var auxv_read = false;
+
+comptime {
+    // An executable gets std's own (from its startup code); only the library needs this.
+    if (@import("builtin").output_mode == .Lib) @export(&getauxvalProc, .{ .name = "getauxval" });
+}
+
+fn getauxvalProc(index: usize) callconv(.c) usize {
+    const linux = std.os.linux;
+    if (!auxv_read) {
+        auxv_read = true;
+        const rc = linux.open("/proc/self/auxv", .{ .ACCMODE = .RDONLY }, 0);
+        if (linux.errno(rc) == .SUCCESS) {
+            const fd: i32 = @intCast(rc);
+            const bytes = std.mem.sliceAsBytes(auxv[0..]);
+            var got: usize = 0;
+            while (got < bytes.len) {
+                const n = linux.read(fd, bytes[got..].ptr, bytes.len - got);
+                if (linux.errno(n) != .SUCCESS or n == 0) break;
+                got += n;
+            }
+            auxv_len = got / @sizeOf(usize);
+            _ = linux.close(fd);
+        }
+    }
+    var i: usize = 0;
+    while (i + 1 < auxv_len) : (i += 2) {
+        if (auxv[i] == 0) break;
+        if (auxv[i] == index) return auxv[i + 1];
+    }
+    return 0;
 }

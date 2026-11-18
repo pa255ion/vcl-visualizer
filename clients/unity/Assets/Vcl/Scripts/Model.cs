@@ -73,7 +73,7 @@ namespace Vcl
                         Model.Gltf(bytes, (uri, got) => LoadBytes(dir + uri, got), Place, Fail);
                     }
                 }
-                catch (Exception ex) { Fail(ex.Message); }
+                catch (Exception ex) { Fail(ex.Message); Debug.LogException(ex); }
             });
         }
     }
