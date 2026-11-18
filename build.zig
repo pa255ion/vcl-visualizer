@@ -97,5 +97,8 @@ pub fn build(b: *std.Build) void {
 
     // Tests
     const tests = b.addTest(.{ .root_module = vcl });
-    b.step("test", "Run parser tests").dependOn(&b.addRunArtifact(tests).step);
+    const quest_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("core/src/quest.zig"), .target = target, .optimize = optimize }) });
+    const test_step = b.step("test", "Run parser tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+    test_step.dependOn(&b.addRunArtifact(quest_tests).step);
 }

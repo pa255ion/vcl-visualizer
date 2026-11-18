@@ -276,6 +276,9 @@ $('#skip').onclick = () => runtime.timeline.flush();
 editor.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); $('#run').click(); }
 });
+// The Headset page runs adb on this machine, so offer it only when the page
+// comes from this machine's vcl serve.
+if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && location.port) $('#headset').hidden = false;
 $('#toggle-editor').onclick = () => { document.body.classList.toggle('editing'); fitCamera(); };
 $('#voice').value = voice.mode;
 $('#voice').onchange = (e) => voice.setMode(e.target.value);

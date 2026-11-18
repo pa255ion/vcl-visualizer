@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VCL Headset</title>
+<style>
+  :root {
+    --bg: #0b0f16; --panel: #121924; --line: #26324a; --fg: #e8edf3; --muted: #8796ab;
+    --accent: #7fe3ff; --ok: #66bb6a; --warn: #ffa726; --err: #ef5350;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 Inter, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  .brand { font-weight: 800; letter-spacing: .08em; color: var(--accent); text-decoration: none; }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+  #state { display: flex; gap: 14px; align-items: flex-start; }
+  #dot { flex: none; width: 14px; height: 14px; border-radius: 50%; margin-top: 5px; background: var(--muted); }
+  #dot[data-s="ok"] { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+  #dot[data-s="warn"] { background: var(--warn); }
+  #dot[data-s="err"] { background: var(--err); }
+  #headline { font-size: 18px; font-weight: 600; }
+  #hint { color: var(--muted); margin-top: 4px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .fact { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .fact.yes { color: var(--fg); border-color: #2f5d3a; }
+  .fact.yes::before { content: "✓ "; color: var(--ok); }
+  .fact.no::before { content: "✗ "; color: var(--err); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; color: var(--fg); background: #1a2333; border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: progress; }
+  button.primary { background: #1d4a5a; border-color: #2c6b80; font-weight: 600; padding: 10px 18px; }
+  label { color: var(--muted); font-size: 14px; display: flex; gap: 8px; align-items: center; }
+  input[type=text] { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; width: 150px; }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; margin-top: 14px; }
+  #log { white-space: pre-wrap; font: 12px/1.5 ui-monospace, "JetBrains Mono", monospace; color: var(--muted);
+    max-height: 220px; overflow: auto; margin: 0; }
+  #log:empty::before { content: "Nothing yet."; }
+  details summary { cursor: pointer; color: var(--muted); }
+  ol { padding-left: 20px; margin: 8px 0 0; color: var(--muted); }
+  code { font: 13px ui-monospace, monospace; color: var(--fg); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+</style>
+</head>
+<body>
+<main>
+  <header><a class="brand" href="./">VCL</a><h1>Headset</h1></header>
+
+  <section class="card">
+    <div id="state">
+      <div id="dot"></div>
+      <div>
+        <div id="headline">Checking…</div>
+        <div id="hint"></div>
+      </div>
+    </div>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section class="card">
+    <div class="actions">
+      <button class="primary" id="connect">Connect headset</button>
+      <button id="start" title="Start the VCL app on the headset, or bring it to the front">Start app</button>
+      <button id="disconnect" title="Drop the Wi-Fi link (use the cable again)">Disconnect Wi-Fi</button>
+    </div>
+    <div class="row">
+      <label title="Check every few seconds and reconnect when the link drops">
+        <input type="checkbox" id="auto"> Keep connected</label>
+      <label>Headset Wi-Fi address <input type="text" id="ip" placeholder="192.168.…" inputmode="decimal"></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <details id="log-box" open>
+      <summary>Log</summary>
+      <pre id="log"></pre>
+    </details>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>How this works</summary>
+      <ol>
+        <li>The headset app talks to <code>127.0.0.1:<span class="port">8093</span></code> on the headset, and
+          adb forwards that port to this computer.</li>
+        <li>adb can run over the USB cable or over Wi-Fi. <b>Connect headset</b> switches it to Wi-Fi so you
+          can unplug, and forwards the port.</li>
+        <li>Switching to Wi-Fi needs the cable once after each headset restart. Until then, Connect works
+          without it, using the address above.</li>
+        <li>Terminal version: <code>tools/quest-wifi.sh</code>.</li>
+      </ol>
+      <table id="transports"></table>
+    </details>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+let busy = false, lastAuto = 0, status = null;
+
+function log(text) {
+  if (!text) return;
+  const t = new Date().toLocaleTimeString();
+  $("log").textContent += text.trim().split("\n").map((l) => `${t}  ${l}`).join("\n") + "\n";
+  $("log").scrollTop = 1e9;
+}
+
+function best(list) {
+  const ready = list.filter((t) => t.state === "device");
+  return ready.find((t) => t.wifi) || ready[0] || null;
+}
+
+function render(s) {
+  status = s;
+  document.querySelectorAll(".port").forEach((e) => (e.textContent = s.port));
+  if (s.known_ip && !$("ip").value) $("ip").value = s.known_ip;
+  const t = best(s.transports || []);
+  if (t && t.ip) { store.set("vcl.quest.ip", t.ip); if (document.activeElement !== $("ip")) $("ip").value = t.ip; }
+
+  let dot = "err", head, hint = "";
+  const unauth = (s.transports || []).find((x) => x.state === "unauthorized");
+  if (!s.adb) {
+    head = "adb isn't available";
+    hint = "Install it (android-tools) and restart vcl serve.";
+  } else if (!t && unauth) {
+    dot = "warn"; head = "Allow USB debugging";
+    hint = "Put on the headset and accept the USB debugging prompt for this computer.";
+  } else if (!t) {
+    head = "No headset found";
+    hint = $("ip").value
+      ? "Press Connect to try Wi-Fi. If that fails, the headset has restarted: plug it in by USB once."
+      : "Plug the headset in by USB, then press Connect.";
+  } else if (!t.forwarded) {
+    dot = "warn"; head = "Headset found, not linked yet";
+    hint = "Press Connect to forward the port.";
+  } else if (!t.wifi) {
+    dot = "warn"; head = "Connected by cable";
+    hint = "Works now. Press Connect to switch to Wi-Fi so you can unplug.";
+  } else {
+    dot = "ok"; head = "Connected over Wi-Fi";
+    hint = t.app ? "You can unplug the cable." : "Press Start app, or open VCL in the headset's app library.";
+  }
+  $("dot").dataset.s = dot;
+  $("headline").textContent = head;
+  $("hint").textContent = hint;
+
+  const facts = [];
+  if (t) {
+    facts.push([`${t.wifi ? "Wi-Fi" : "USB"}${t.ip ? " · " + t.ip : ""}`, true]);
+    facts.push([`port ${s.port} forwarded`, t.forwarded]);
+    facts.push(["app running", t.app]);
+  }
+  facts.push([`${s.viewers} viewer${s.viewers === 1 ? "" : "s"} on the server`, s.viewers > 0]);
+  $("facts").replaceChildren(...facts.map(([text, yes]) => {
+    const e = document.createElement("span");
+    e.className = "fact " + (yes ? "yes" : "no");
+    e.textContent = text;
+    return e;
+  }));
+
+  const rows = (s.transports || []).map((x) =>
+    `<tr><td>${esc(x.serial)}</td><td>${x.wifi ? "Wi-Fi" : "USB"}</td><td>${esc(x.state)}</td><td>${x.forwarded ? "forwarded" : ""}</td></tr>`);
+  $("transports").innerHTML = rows.length ? "<tr><th>adb device</th><th>link</th><th>state</th><th></th></tr>" + rows.join("") : "";
+
+  $("start").disabled = busy || !t;
+  $("disconnect").disabled = busy || !(s.transports || []).some((x) => x.wifi);
+  return t;
+}
+
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function refresh() {
+  try {
+    const r = await fetch("quest/status", { cache: "no-store" });
+    if (!r.ok) throw new Error(await r.text());
+    return render(await r.json());
+  } catch (e) {
+    $("dot").dataset.s = "err";
+    $("headline").textContent = "Can't reach vcl serve";
+    $("hint").textContent = String(e.message || e);
+    return null;
+  }
+}
+
+async function act(action) {
+  if (busy) return;
+  busy = true;
+  for (const b of document.querySelectorAll("button")) b.disabled = true;
+  try {
+    const ip = $("ip").value.trim();
+    const q = action === "connect" && /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? `?ip=${ip}` : "";
+    if (action === "connect") log("Connecting…");
+    const r = await fetch(`quest/${action}${q}`, { method: "POST", headers: { "x-vcl": "quest" } });
+    const out = r.headers.get("content-type")?.includes("json") ? await r.json() : { log: await r.text() };
+    log(out.log);
+    if (out.ip) { $("ip").value = out.ip; store.set("vcl.quest.ip", out.ip); }
+  } catch (e) {
+    log(`failed: ${e.message || e}`);
+  } finally {
+    busy = false;
+    for (const b of document.querySelectorAll("button")) b.disabled = false;
+    await refresh();
+  }
+}
+
+$("connect").onclick = () => act("connect");
+$("start").onclick = () => act("start");
+$("disconnect").onclick = () => { $("auto").checked = false; store.set("vcl.quest.auto", "0"); act("disconnect"); };
+$("auto").onchange = () => { store.set("vcl.quest.auto", $("auto").checked ? "1" : "0"); tick(); };
+$("ip").value = store.get("vcl.quest.ip") || "";
+$("auto").checked = store.get("vcl.quest.auto") !== "0";
+
+async function tick() {
+  if (busy) return;
+  const t = await refresh();
+  if (!$("auto").checked || !status || !status.adb || busy) return;
+  const healthy = t && t.forwarded && t.wifi;
+  const canTry = t || $("ip").value;
+  // Retry a failing link every 15 s, not every poll: adb connect to a
+  // sleeping headset takes a while to give up.
+  if (!healthy && canTry && Date.now() - lastAuto > 15000) {
+    lastAuto = Date.now();
+    await act("connect");
+  }
+}
+
+tick();
+setInterval(tick, 4000);
+</script>
+</body>
+</html>

@@ -54,8 +54,15 @@ That writes it to the app's `server.txt`. Then load lessons from the web page
 broadcasts plays on every connected viewer.
 
 The NixOS firewall blocks port 8093 from the LAN. Without opening it, adb over
-Wi-Fi carries the port forward instead (needs the cable once per headset boot):
-`adb tcpip 5555 && adb connect <quest-ip>:5555 && adb reverse tcp:8093 tcp:8093`.
+Wi-Fi carries the port forward instead. The cable is needed once per headset boot.
+Two ways to set that up:
+
+* **Headset page:** open `http://localhost:8093/quest.html` (the **Headset** button
+  in the viewer). It shows whether the headset is linked and has a **Connect
+  headset** button. With **Keep connected** ticked, it relinks on its own while
+  the page is open.
+* **Terminal:** `tools/quest-wifi.sh [headset-ip]`. Run it again whenever the
+  link drops. It remembers the last address.
 
 **Controls:**
 

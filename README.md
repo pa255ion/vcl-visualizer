@@ -146,6 +146,10 @@ WebXR needs a secure origin, which means `localhost` or HTTPS.
 * **USB (simplest):** enable developer mode, plug in, run
   `adb reverse tcp:8080 tcp:8080`, then open `http://localhost:8080` in the
   Quest browser and press **Enter VR** or **Enter AR** (passthrough).
+* **adb over Wi-Fi (no cable after setup):** open `http://localhost:8080/quest.html`
+  on the desktop (the **Headset** button) and press **Connect headset**, or
+  run `tools/quest-wifi.sh "" 8080`. The page and script switch adb to Wi-Fi
+  and forward the port. They need the cable once after each headset restart.
 * **Wi-Fi:** run `vcl serve --host 0.0.0.0`, then either put it behind HTTPS
   (for example `tailscale serve 8080` with Tailscale on the headset) or add
   `http://<desktop-ip>:8080` under *Insecure origins treated as secure* in

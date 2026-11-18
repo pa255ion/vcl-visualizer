@@ -20,7 +20,10 @@ canvas { display: block; }
 
 button, select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 12px; cursor: pointer; }
-button:hover, select:hover { border-color: var(--accent); }
+a.btn { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 12px; text-decoration: none; }
+a.btn[hidden] { display: none; }
+button:hover, a.btn:hover, select:hover { border-color: var(--accent); }
 #ask-form { display: flex; gap: 6px; flex: 0 1 460px; min-width: 0; }
 #ask-form[hidden] { display: none; }
 #ask { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);

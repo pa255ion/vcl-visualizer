@@ -17,10 +17,14 @@
 //!   GET  /scene       current scene as {"cmds":[...]} (for late joiners/pollers)
 //!   POST /ask         a learner question → broadcast {"op":"ask","text":…}
 //!   POST /status      tutor state ("thinking"/"idle") → {"op":"status","text":…}
+//!   GET  /quest/status, POST /quest/connect|start|disconnect
+//!                     connect a Quest headset through adb (the Headset page,
+//!                     /quest.html); only from this machine
 
 const std = @import("std");
 const builtin = @import("builtin");
 const vcl = @import("vcl");
+const quest = @import("quest.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const WebSocket = std.http.Server.WebSocket;
@@ -164,6 +168,13 @@ const Hub = struct {
     log: std.ArrayList([]u8) = .empty,
     /// The last `board` line: it outlives `clear`, so it starts every replay log.
     board: ?[]u8 = null,
+    /// The port we serve on, which adb forwards to the headset.
+    port: u16 = 0,
+    /// One adb conversation at a time (the Headset page polls).
+    quest_mutex: Io.Mutex = .init,
+    /// The headset's last Wi-Fi address, to reconnect without the cable.
+    quest_ip: [15]u8 = undefined,
+    quest_ip_len: usize = 0,
 
     fn lock(h: *Hub) void {
         h.mutex.lockUncancelable(h.io);
@@ -299,7 +310,7 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
     defer if (library) |*d| d.close(io);
     if (lessons_path) |lp| std.log.info("lessons: {s}/ at /library/", .{lp});
 
-    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .library = library, .scene = vcl.Scene.init(gpa) };
+    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .library = library, .scene = vcl.Scene.init(gpa), .port = port };
     defer hub.scene.deinit();
 
     const addr = try Io.net.IpAddress.parse(host, port);
@@ -369,6 +380,10 @@ fn handleConn(hub: *Hub, stream: Io.net.Stream) Io.Cancelable!void {
 
     while (true) {
         var req = http.receiveHead() catch return;
+        // A POST with neither Content-Length nor chunking has an empty body
+        // (RFC 9112 §6.3); std.http asserts one of them is there.
+        if (req.head.method.requestHasBody() and req.head.transfer_encoding == .none and req.head.content_length == null)
+            req.head.content_length = 0;
         const target = req.head.target;
         const path = target[0 .. std.mem.indexOfScalar(u8, target, '?') orelse target.len];
         const query = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[q + 1 ..] else "";
@@ -382,12 +397,20 @@ fn handleConn(hub: *Hub, stream: Io.net.Stream) Io.Cancelable!void {
             else => {},
         }
 
-        const keep = route(hub, &req, conn, path, query) catch |err| {
+        const keep = route(hub, &req, conn, path, query, isLocal(stream.socket.address)) catch |err| {
             std.log.warn("{s} {s}: {s}", .{ @tagName(req.head.method), path, @errorName(err) });
             return;
         };
         if (!keep) return;
     }
+}
+
+fn isLocal(peer: Io.net.IpAddress) bool {
+    return switch (peer) {
+        .ip4 => |a| a.bytes[0] == 127,
+        .ip6 => |a| std.mem.eql(u8, &a.bytes, &(.{0} ** 15 ++ .{1})) or
+            (std.mem.eql(u8, a.bytes[0..12], &(.{0} ** 10 ++ .{ 0xff, 0xff })) and a.bytes[12] == 127),
+    };
 }
 
 fn queryParam(query: []const u8, name: []const u8) ?[]const u8 {
@@ -406,7 +429,7 @@ fn modeFrom(query: []const u8) vcl.Mode {
 
 const cors: std.http.Header = .{ .name = "access-control-allow-origin", .value = "*" };
 
-fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8, query: []const u8) !bool {
+fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8, query: []const u8, local: bool) !bool {
     const gpa = hub.gpa;
     const method = req.head.method;
 
@@ -418,6 +441,8 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         } });
         return true;
     }
+
+    if (std.mem.startsWith(u8, path, "/quest/")) return questRoute(hub, req, path["/quest/".len..], query, local);
 
     if (method == .POST and std.mem.eql(u8, path, "/vcl")) {
         const mode = modeFrom(query);
@@ -543,6 +568,86 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         .{ .name = "content-type", .value = mimeType(rel) },
         .{ .name = "cache-control", .value = "no-cache" },
     } });
+    return true;
+}
+
+/// The Headset page's endpoints: they run adb, so only this machine may call
+/// them, and actions need an `x-vcl: quest` header, which a cross-site page
+/// can't send without a preflight we don't allow.
+fn questRoute(hub: *Hub, req: *std.http.Server.Request, action: []const u8, query: []const u8, local: bool) !bool {
+    const json: std.http.Header = .{ .name = "content-type", .value = "application/json" };
+    if (!local) {
+        try req.respond("the headset controls only work from the machine running vcl serve\n", .{ .status = .forbidden });
+        return true;
+    }
+    const is_status = std.mem.eql(u8, action, "status");
+    if (is_status != (req.head.method == .GET)) {
+        try req.respond("method not allowed\n", .{ .status = .method_not_allowed });
+        return true;
+    }
+    if (!is_status) {
+        var marked = false;
+        var it = req.iterateHeaders();
+        while (it.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, "x-vcl") and std.mem.eql(u8, h.value, "quest")) {
+            marked = true;
+        };
+        if (!marked) {
+            try req.respond("missing x-vcl: quest header\n", .{ .status = .forbidden });
+            return true;
+        }
+    }
+
+    var arena_state: std.heap.ArenaAllocator = .init(hub.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var q: quest.Quest = .init(hub.io, arena, hub.port);
+    var out: Io.Writer.Allocating = .init(arena);
+
+    hub.quest_mutex.lockUncancelable(hub.io);
+    defer hub.quest_mutex.unlock(hub.io);
+    const known: ?[]const u8 = if (queryParam(query, "ip")) |ip| (if (quest.validIp(ip)) ip else null) else if (hub.quest_ip_len > 0) hub.quest_ip[0..hub.quest_ip_len] else null;
+
+    if (is_status) {
+        try q.statusJson(&out.writer);
+        // Splice in what only the server knows: connected viewers, the remembered address.
+        const viewers = blk: {
+            hub.lock();
+            defer hub.unlock();
+            break :blk hub.clients.items.len;
+        };
+        const body = out.written();
+        var full: Io.Writer.Allocating = .init(arena);
+        try full.writer.print("{s},\"viewers\":{d},\"known_ip\":", .{ body[0 .. body.len - 1], viewers });
+        if (known) |k| try std.json.Stringify.encodeJsonString(k, .{}, &full.writer) else try full.writer.writeAll("null");
+        try full.writer.writeAll("}");
+        try req.respond(full.written(), .{ .extra_headers = &.{ json, .{ .name = "cache-control", .value = "no-store" } } });
+        return true;
+    }
+
+    var ip: ?[]const u8 = null;
+    const ran: anyerror!void = if (std.mem.eql(u8, action, "connect"))
+        (if (q.connect(known)) |got| {
+            ip = got;
+        } else |err| err)
+    else if (std.mem.eql(u8, action, "start"))
+        q.startApp()
+    else if (std.mem.eql(u8, action, "disconnect"))
+        q.disconnect()
+    else {
+        try req.respond("unknown action\n", .{ .status = .not_found });
+        return true;
+    };
+    ran catch |err| q.log.writer.print("{s}\n", .{if (err == error.NoAdb) "adb isn't installed (or not on PATH)." else @errorName(err)}) catch {};
+    if (ip) |addr| if (quest.validIp(addr)) {
+        @memcpy(hub.quest_ip[0..addr.len], addr);
+        hub.quest_ip_len = addr.len;
+    };
+    try out.writer.writeAll("{\"log\":");
+    try std.json.Stringify.encodeJsonString(q.log.written(), .{}, &out.writer);
+    try out.writer.writeAll(",\"ip\":");
+    if (ip) |addr| try std.json.Stringify.encodeJsonString(addr, .{}, &out.writer) else try out.writer.writeAll("null");
+    try out.writer.writeAll("}");
+    try req.respond(out.written(), .{ .extra_headers = &.{json} });
     return true;
 }
 
