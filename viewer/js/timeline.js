@@ -1,10 +1,12 @@
 // Timeline scheduler (see docs/SPEC.md §3).
 //
-// A task is { dur, par, ease, gate, begin(), update(eased, raw), finish() }.
+// A task is { dur, par, ease, gate, step, begin(), update(eased, raw), finish() }.
 // Sequential tasks start when the previous finishes (or now, if the stream
 // fell behind); `par` tasks start with the previous task. A `gate` task waits,
-// once its time comes, until release() (step-by-step playback): everything
-// queued behind it moves later by the time spent waiting.
+// once its time comes, until release() (step-by-step playback, questions):
+// everything queued behind it moves later by the time spent waiting. `step`
+// numbers the lesson's steps (a sentence or question and what goes with it),
+// so finishThrough() can skip one.
 
 export const EASES = {
   linear: (p) => p,
@@ -31,10 +33,11 @@ export class Timeline {
   /** Anything playing or still to come. */
   get busy() { return this.queue.length > 0 || this.active.length > 0; }
 
-  /** Let a held gate (and everything after it) go. */
-  release(now) {
+  /** Let a held gate (and everything after it) go. A question's gate
+   *  only opens with `force` (it was answered or skipped). */
+  release(now, force = false) {
     const g = this.waiting;
-    if (!g) return false;
+    if (!g || (g.question && !force)) return false;
     const shift = Math.max(0, now - g.start);
     for (const t of this.queue) { t.start += shift; t.end += shift; }
     this.cursor += shift;
@@ -86,6 +89,27 @@ export class Timeline {
       if (raw >= 1) { this.#call(t, 'finish'); return false; }
       return true;
     });
+  }
+
+  /**
+   * Skip ahead one step: finish what is playing and everything queued up to
+   * and including step `step` now (tasks where `quiet(t)` holds, like speech,
+   * are dropped instead), then start what follows now, without its gate.
+   */
+  finishThrough(step, now, quiet = () => false) {
+    for (const t of this.active) if (t.ok) this.#call(t, 'update', 1, 1) && this.#call(t, 'finish');
+    this.active = [];
+    this.waiting = null;
+    while (this.queue.length && (this.queue[0].step ?? 0) <= step) {
+      const t = this.queue.shift();
+      if (!quiet(t)) this.runNow(t);
+    }
+    if (!this.queue.length) { this.cursor = this.lastStart = -Infinity; return; }
+    const shift = this.queue[0].start - now;
+    for (const t of this.queue) { t.start -= shift; t.end -= shift; }
+    this.cursor -= shift;
+    this.lastStart -= shift;
+    if (!this.queue[0].question) this.queue[0].gate = false;
   }
 
   /** Finish everything immediately (e.g. "skip ahead"). */

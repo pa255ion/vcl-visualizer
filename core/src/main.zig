@@ -17,6 +17,8 @@
 //!   GET  /scene       current scene as {"cmds":[...]} (for late joiners/pollers)
 //!   POST /ask         a learner question → broadcast {"op":"ask","text":…}
 //!   POST /status      tutor state ("thinking"/"idle") → {"op":"status","text":…}
+//!   POST /answer      a learner's answer to a question, a JSON object →
+//!                     broadcast as {"op":"answer",…} (not replayed)
 //!   GET  /quest/status, POST /quest/connect|start|disconnect
 //!                     connect a Quest headset through adb (the Headset page,
 //!                     /quest.html); only from this machine
@@ -508,6 +510,24 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         return true;
     }
 
+    if (method == .POST and std.mem.eql(u8, path, "/answer")) {
+        const reader = try req.readerExpectContinue(&conn.body_buf);
+        const body = try reader.allocRemaining(gpa, .limited(64 << 10));
+        defer gpa.free(body);
+        const event = answerEvent(gpa, body) catch {
+            try req.respond("expected a JSON object\n", .{ .status = .bad_request, .extra_headers = &.{cors} });
+            return true;
+        };
+        defer gpa.free(event);
+        {
+            hub.lock();
+            defer hub.unlock();
+            hub.broadcast(event);
+        }
+        try req.respond("ok\n", .{ .extra_headers = &.{cors} });
+        return true;
+    }
+
     if (method != .GET and method != .HEAD) {
         try req.respond("method not allowed\n", .{ .status = .method_not_allowed });
         return true;
@@ -569,6 +589,27 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         .{ .name = "cache-control", .value = "no-cache" },
     } });
     return true;
+}
+
+/// A learner's answer (a JSON object from a viewer) as one broadcast line,
+/// with "op":"answer" first and any "op" of its own dropped.
+fn answerEvent(gpa: Allocator, body: []const u8) ![]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, body, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.NotAnObject;
+    var aw: Io.Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+    try aw.writer.writeAll("{\"op\":\"answer\"");
+    var it = parsed.value.object.iterator();
+    while (it.next()) |kv| {
+        if (std.mem.eql(u8, kv.key_ptr.*, "op")) continue;
+        try aw.writer.writeAll(",");
+        try std.json.Stringify.encodeJsonString(kv.key_ptr.*, .{}, &aw.writer);
+        try aw.writer.writeAll(":");
+        try std.json.Stringify.value(kv.value_ptr.*, .{}, &aw.writer);
+    }
+    try aw.writer.writeAll("}");
+    return aw.toOwnedSlice();
 }
 
 /// The Headset page's endpoints: they run adb, so only this machine may call

@@ -112,6 +112,9 @@ function emit(chunk) {
     if (sentLines.size > 2000) sentLines.delete(lineNo - 2000);
     // Mirror the server's parser: inside a <<TAG block nothing is a fence.
     if (blockTag) { if (line.trim() === blockTag) blockTag = null; continue; }
+    // Questions we ask: their answers come back to us (and only theirs).
+    const asked = inFence && /^\s*(?:&\s*)?(?:\w+:\s*)?(quiz|pick|estimate|recall)\s+"((?:[^"\\]|\\.)*)"/.exec(line);
+    if (asked) askedQuestions.add(asked[2].replace(/\\(.)/g, '$1'));
     const open = inFence && /\s<<([A-Za-z_]\w*)\s*$/.exec(line);
     if (open) blockTag = open[1];
     else if (line.trim().startsWith('```')) inFence = !inFence;
@@ -125,8 +128,27 @@ function endText() {
   if (inFence) emit('```\n');
 }
 
-// Listener link: questions from any viewer (or from our own terminal via POST /ask).
-link(WS, { onMessage: (m) => { if (m.op === 'ask') enqueue(m.text); } });
+// Listener link: questions from any viewer (or from our own terminal via POST /ask),
+// and the learner's answers to the questions we asked.
+const askedQuestions = new Set();
+link(WS, {
+  onMessage: (m) => {
+    if (m.op === 'ask') enqueue(m.text);
+    if (m.op === 'answer' && askedQuestions.has(m.q)) enqueue(describeAnswer(m));
+  },
+});
+
+/** An answer event as a note to the model. */
+function describeAnswer(a) {
+  const pick = (ns, names) => (ns ?? []).map((n) => `"${names?.[n - 1] ?? n}"`).join(' and ');
+  let what;
+  if (a.skipped) what = 'skipped it';
+  else if (a.kind === 'quiz') what = `chose ${pick(a.given, a.options)} (${a.correct ? 'right' : `wrong; right: ${pick(a.answer, a.options)}`})`;
+  else if (a.kind === 'pick') what = `pointed at ${pick(a.given, a.ids)} (${a.correct ? 'right' : `wrong; right: ${pick(a.answer, a.ids)}`})`;
+  else if (a.kind === 'estimate') what = `said ${a.given}${a.unit ? ` ${a.unit}` : ''} (${a.correct ? 'close enough' : 'off'}; the answer is ${a.answer})`;
+  else what = a.correct ? 'says they knew it' : "says they didn't know it";
+  return `[answer] To your ${a.kind} "${a.q}", the learner ${what}. React in a sentence or two: confirm, or clear up the misunderstanding (draw if it helps), then go on.`;
+}
 
 // ───────────── turns ─────────────
 

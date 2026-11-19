@@ -103,6 +103,39 @@ test('timeline: a gate holds the rest until release, then everything moves later
   assert.ok(!tl.busy && !tl.release(6));
 });
 
+test('timeline: finishThrough skips one step and starts the next now', () => {
+  const tl = new Timeline((e) => { throw e; });
+  const log = [];
+  const mk = (n, step, dur, extra = {}) => ({ dur, step, ...extra, begin: () => log.push(n), finish: () => log.push(`/${n}`) });
+  tl.add(mk('say1', 1, 3), 0);
+  tl.add(mk('draw1', 1, 1), 0);       // 3..4
+  tl.add(mk('say2', 2, 2, { gate: true }), 0); // 4..6, held in step mode
+  tl.add(mk('draw2', 2, 1), 0);
+  tl.tick(1);
+  assert.deepEqual(log, ['say1']);
+  // Skip step 1: say1 finishes, draw1 runs at once, say1's speech isn't replayed.
+  tl.finishThrough(1, 1, (t) => t === undefined);
+  assert.deepEqual(log, ['say1', '/say1', 'draw1', '/draw1']);
+  tl.tick(1); // step 2 starts now, without waiting for its gate
+  assert.deepEqual(log.slice(4), ['say2']);
+  tl.tick(3.5);
+  assert.deepEqual(log.slice(4), ['say2', 'draw2', '/say2']);
+});
+
+test('timeline: a question gate opens only with force', () => {
+  const tl = new Timeline((e) => { throw e; });
+  const log = [];
+  tl.add({ dur: 0, begin: () => log.push('card') }, 0);
+  tl.add({ dur: 0, gate: true, question: true }, 0);
+  tl.add({ dur: 0, begin: () => log.push('after') }, 0);
+  tl.tick(0); tl.tick(1);
+  assert.ok(tl.waiting?.question);
+  assert.ok(!tl.release(2)); // the trigger's "next" doesn't answer it
+  assert.ok(tl.release(2, true));
+  tl.tick(2);
+  assert.deepEqual(log, ['card', 'after']);
+});
+
 const ttsWasm = new URL('../tts.wasm', import.meta.url);
 test('tts.wasm: speech with an exact duration', { skip: !existsSync(ttsWasm) && 'run `zig build` first' }, async () => {
   const { instance } = await WebAssembly.instantiate(readFileSync(ttsWasm), {});

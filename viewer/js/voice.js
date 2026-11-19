@@ -106,7 +106,7 @@ export class Voice {
 
   /** Synthesize a say command's audio and set its duration to match (runs on arrival). */
   prepare(cmd) {
-    if (this.mode !== 'robot' || !this.tts || !cmd.text) return;
+    if (this.mode !== 'robot' || !this.tts || !cmd.text || cmd.audio) return; // (replayed: already done)
     const x = this.tts;
     const bytes = new TextEncoder().encode(cmd.text);
     const p = x.tts_alloc(bytes.length);
@@ -142,8 +142,19 @@ export class Voice {
     }
   }
 
+  pause() {
+    if (this.audio.isPlaying) this.audio.pause();
+    if ('speechSynthesis' in window) speechSynthesis.pause();
+  }
+
+  resume() {
+    // A paused buffer keeps its place: play() carries on from there.
+    if (this.audio.buffer && !this.audio.isPlaying && this.audio._progress > 0) this.audio.play();
+    if ('speechSynthesis' in window) speechSynthesis.resume();
+  }
+
   stop() {
-    if (this.audio.isPlaying) this.audio.stop();
+    if (this.audio.isPlaying || this.audio._progress > 0) this.audio.stop();
     if ('speechSynthesis' in window) speechSynthesis.cancel();
   }
 

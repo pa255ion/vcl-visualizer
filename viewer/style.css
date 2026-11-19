@@ -62,6 +62,13 @@ body.editing #log { right: auto; }
 #play[data-state="waiting"] { color: var(--fg); border-color: var(--accent); }
 #play[data-state="waiting"]::before { content: "❚❚"; color: var(--accent); }
 #play[data-state="done"]::before { content: "✓"; color: var(--ok); }
+#play[data-state="done"] { color: var(--fg); border-color: #2f5d3a; }
+#play[data-state="paused"]::before { content: "❚❚"; color: var(--warn); }
+#play[data-state="question"] { color: var(--fg); border-color: var(--accent); }
+#play[data-state="question"]::before { content: "?"; color: var(--accent); font-weight: 800; }
+#transport { display: flex; gap: 4px; }
+#transport[hidden] { display: none; }
+#transport button { padding: 6px 10px; min-width: 38px; }
 #next.ready { border-color: var(--accent); background: #1d4a5a; animation: glow 1.4s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: .35; } }
 @keyframes glow { 50% { box-shadow: 0 0 0 3px #7fe3ff44; } }

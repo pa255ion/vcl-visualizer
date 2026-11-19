@@ -232,6 +232,15 @@ async function stopAndClear() {
   else if (parser) { parser.reset(modeSel.value); fedLines = 0; }
 }
 
+// ── answers to questions: logged, and sent to the server for the tutor ──
+runtime.onAnswer = (a) => {
+  const what = a.skipped ? 'skipped' : a.correct ? 'right' : 'wrong';
+  log('info', `answer (${a.kind}${a.id ? ` ${a.id}` : ''}): ${what}`);
+  if (!transport?.connected) return;
+  const base = serverUrl.replace(/^ws/, 'http').replace(/\/ws$/, '');
+  fetch(`${base}/answer`, { method: 'POST', body: JSON.stringify(a) }).catch((e) => log('warning', `answer: ${e.message}`));
+};
+
 // ── asking the teacher (needs the server and a running tutor) ──
 async function ask(text) {
   text = text.trim();
@@ -351,7 +360,7 @@ function markLine(n) {
 }
 editor.addEventListener('scroll', () => markedLine && markLine(markedLine));
 editor.addEventListener('input', () => markLine(0)); // edited: the numbers no longer match
-runtime.timeline.onBegin = (t) => { if (t.cmd?.editorLine) markLine(t.cmd.editorLine); };
+runtime.onBegin = (t) => { if (t.cmd?.editorLine) markLine(t.cmd.editorLine); };
 
 function setting(id, key, def, onChange = () => {}) {
   const el = $(id);
@@ -366,24 +375,47 @@ setting('#step', 'vcl.step', false, (on) => {
   if (!on) runtime.next(); // don't leave a sentence waiting
 });
 $('#next').onclick = () => runtime.next();
+$('#back').onclick = () => runtime.back();
+$('#fwd').onclick = () => runtime.forward();
+$('#pause').onclick = () => runtime.togglePause();
+// Space: next step (step mode) or pause/resume; → skips to the next step, ← goes back one.
 addEventListener('keydown', (e) => {
   if (e.target.closest?.('textarea, input, select')) return;
-  if ([' ', 'ArrowRight', 'PageDown', 'Enter'].includes(e.key) && runtime.waiting) {
-    e.preventDefault();
-    runtime.next();
-  }
+  const act = {
+    ' ': () => (runtime.waiting ? runtime.next() : runtime.togglePause()),
+    Enter: () => runtime.waiting && runtime.next(),
+    ArrowRight: () => runtime.forward(), PageDown: () => runtime.forward(),
+    ArrowLeft: () => runtime.back(), PageUp: () => runtime.back(),
+  }[e.key];
+  if (!act) return;
+  e.preventDefault();
+  act();
 });
 
 const play = $('#play');
 let wasBusy = false;
+/** The playback pill and buttons; when a lesson (or a reply) ends, say so. */
 function showPlayState() {
-  const busy = runtime.timeline.busy;
-  const state = runtime.waiting ? 'waiting' : busy ? 'playing' : wasBusy ? 'done' : play.dataset.state;
+  const rs = runtime.state, busy = rs !== 'idle';
+  const state = busy ? rs : wasBusy ? 'done' : play.dataset.state;
+  const finished = !busy && wasBusy;
   wasBusy = busy;
+  $('#transport').hidden = !runtime.steps;
+  $('#pause').textContent = rs === 'paused' ? '▶' : '❚❚';
+  $('#pause').title = rs === 'paused' ? 'Resume (Space)' : 'Pause (Space)';
+  if (finished) {
+    const { right, total } = runtime.score;
+    const score = total ? ` · ${right} of ${total} right` : '';
+    play.dataset.score = score;
+    avatar.hear(`✓ Finished${score}`, { thinking: false, secs: 8 });
+  }
   if (state === play.dataset.state) return;
   play.dataset.state = state;
   play.hidden = !state;
-  play.textContent = { playing: 'playing', waiting: 'paused · Space for next', done: 'finished' }[state] ?? '';
+  play.textContent = {
+    playing: 'playing', paused: 'paused · Space to resume', waiting: 'step mode · Space for next',
+    question: 'your turn: answer the question', done: `finished${play.dataset.score ?? ''}`,
+  }[state] ?? '';
   $('#next').classList.toggle('ready', state === 'waiting');
   if (state === 'done') markLine(0);
 }
@@ -426,6 +458,77 @@ function applyPlacement() {
 }
 applyPlacement();
 
+// ── pressing things on the board (question cards): mouse, or a controller's ray ──
+// Each pointer (0, 1: controllers; 'mouse') hovers one hit; pressing it calls
+// press(), and while held, drag() follows the pointer over that hit's plane.
+const controllers = [];
+const pointer = {
+  ray: new THREE.Raycaster(),
+  hover: new Map(), // pointer → hit
+  held: new Map(),  // pointer → hit being dragged
+  /** Aim pointer `id` along a ray; returns the hit it is over. */
+  aim(id, origin, dir) {
+    this.ray.set(origin, dir);
+    const hits = runtime.hits;
+    const meshes = hits.map((h) => h.mesh);
+    const top = meshes.length ? this.ray.intersectObjects(meshes, false)[0] : null;
+    const hit = top ? hits[meshes.indexOf(top.object)] : null;
+    const prev = this.hover.get(id);
+    if (prev !== hit) { prev?.hover(false); hit?.hover(true); this.hover.set(id, hit); }
+    const held = this.held.get(id);
+    if (held?.drag) {
+      // Follow the pointer over the dragged thing's plane.
+      const n = new THREE.Vector3(0, 0, 1).transformDirection(held.mesh.matrixWorld);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, held.mesh.getWorldPosition(new THREE.Vector3()));
+      const at = this.ray.ray.intersectPlane(plane, new THREE.Vector3());
+      if (at) held.drag(at);
+    }
+    return hit;
+  },
+  press(id) {
+    const hit = this.hover.get(id);
+    if (!hit || !runtime.hits.includes(hit)) return false;
+    this.held.set(id, hit);
+    if (hit.drag) {
+      const at = this.ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(0, 0, 1).transformDirection(hit.mesh.matrixWorld), hit.mesh.getWorldPosition(new THREE.Vector3())), new THREE.Vector3());
+      if (at) hit.drag(at);
+    }
+    hit.press();
+    return true;
+  },
+  release(id) { this.held.delete(id); },
+  /** Controllers: aim each one's ray every frame. */
+  update() {
+    for (let i = 0; i < controllers.length; i++) {
+      const c = controllers[i];
+      if (!renderer.xr.isPresenting) continue;
+      const o = c.getWorldPosition(new THREE.Vector3());
+      const d = new THREE.Vector3(0, 0, -1).applyQuaternion(c.getWorldQuaternion(new THREE.Quaternion()));
+      this.aim(i, o, d);
+    }
+  },
+};
+// Mouse: hover and press question buttons; a press on one doesn't turn the view.
+const mouse = new THREE.Vector2();
+function aimMouse(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  pointer.ray.setFromCamera(mouse, camera);
+  return pointer.aim('mouse', pointer.ray.ray.origin.clone(), pointer.ray.ray.direction.clone());
+}
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (renderer.xr.isPresenting) return;
+  aimMouse(e);
+  if (pointer.press('mouse')) { e.stopImmediatePropagation(); controls.enabled = false; }
+}, { capture: true });
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (renderer.xr.isPresenting) return;
+  const hit = aimMouse(e);
+  renderer.domElement.style.cursor = hit || pointer.held.has('mouse') ? 'pointer' : '';
+});
+addEventListener('pointerup', () => { pointer.release('mouse'); controls.enabled = true; });
+
 // Controllers: a short ray each; squeeze (grip) re-centres the classroom in front of you.
 for (let i = 0; i < 2; i++) {
   const c = renderer.xr.getController(i);
@@ -434,8 +537,11 @@ for (let i = 0; i < 2; i++) {
   ray.position.z = -0.3;
   c.add(ray);
   c.addEventListener('squeezestart', recenter);
-  c.addEventListener('selectstart', () => runtime.next()); // trigger: next sentence in step mode
+  // Trigger: press what the ray points at (a question's buttons), else next step (step mode).
+  c.addEventListener('selectstart', () => { if (!pointer.press(i)) runtime.next(); });
+  c.addEventListener('selectend', () => pointer.release(i));
   scene.add(c);
+  controllers.push(c);
 }
 function recenter() {
   const head = renderer.xr.getCamera();
@@ -446,12 +552,12 @@ function recenter() {
   savePlacement();
 }
 
-/** Thumbsticks move the board; A (right) / X (left) is push-to-talk. */
-let sticksMoved = false, talkHeld = false;
+/** Thumbsticks move the board (left/right: next or previous step); A/X is push-to-talk; B/Y pauses. */
+let sticksMoved = false, talkHeld = false, pauseHeld = false, flick = 0;
 function readControllers(dt) {
   const session = renderer.xr.getSession();
   if (!session) return;
-  let moved = false, talk = false;
+  let moved = false, talk = false, pause = false, side = 0;
   for (const src of session.inputSources) {
     const gp = src.gamepad;
     if (!gp) continue;
@@ -462,7 +568,14 @@ function readControllers(dt) {
       if (src.handedness === 'left') placement.height = THREE.MathUtils.clamp(placement.height - y * dt * 0.5, -0.9, 0.9);
     }
     if (gp.buttons[4]?.pressed) talk = true;
+    if (gp.buttons[5]?.pressed) pause = true;
+    const x = gp.axes[2] ?? 0;
+    if (Math.abs(x) > 0.7 && Math.abs(y) < 0.5) side = x > 0 ? 1 : -1;
   }
+  if (pause && !pauseHeld) runtime.togglePause();
+  pauseHeld = pause;
+  if (side !== flick) { if (side > 0) runtime.forward(); else if (side < 0) runtime.back(); }
+  flick = side;
   if (moved) applyPlacement();
   if (sticksMoved && !moved) savePlacement();
   sticksMoved = moved;
@@ -486,6 +599,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (!renderer.xr.isPresenting) controls.update();
   else readControllers(dt);
+  pointer.update();
   runtime.update(dt);
   showPlayState();
   avatar.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);

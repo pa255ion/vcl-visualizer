@@ -50,5 +50,9 @@
   {
     "file": "mixed-reply.md",
     "title": "Mixed prose + visuals (LLM reply)"
+  },
+  {
+    "file": "check-yourself.vcl",
+    "title": "Check yourself (questions: quiz, pick, estimate, recall)"
   }
 ]

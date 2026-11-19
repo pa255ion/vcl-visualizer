@@ -89,10 +89,10 @@ export class Avatar {
   }
 
   /** Show what the learner asked (or a status line) in the subtitle strip. */
-  hear(text, { thinking = true } = {}) {
+  hear(text, { thinking = true, secs = 4 } = {}) {
     this.thinking = thinking;
     this.sub.material.color.set('#9fb4cc');
-    this.#subtitle(text, 4);
+    this.#subtitle(text, secs);
   }
 
   say(text, dur) {
@@ -125,7 +125,15 @@ export class Avatar {
     this.pointUntil = this.t + Math.max(3.5, dur);
   }
 
+  /** Stop talking now (the step was skipped). */
+  silence() {
+    this.speakUntil = this.t;
+    this.subUntil = Math.min(this.subUntil ?? 0, this.t + 0.3);
+  }
+
   update(dt, camera) {
+    // Paused: the subtitles and the mouth wait too.
+    if (this.paused) for (const k of ['speakUntil', 'subUntil', 'pointUntil']) if (this[k] > this.t) this[k] += dt;
     this.t += dt;
     const t = this.t;
     this.root.position.y = this.baseY + Math.sin(t * 1.6) * 0.012;
@@ -174,7 +182,7 @@ export class Avatar {
     }
 
     // Speaking: mouth and antenna.
-    const speaking = t < this.speakUntil;
+    const speaking = t < this.speakUntil && !this.paused;
     const heard = this.level?.();
     const talk = heard ?? (speaking ? 0.5 + 0.5 * Math.abs(Math.sin(t * 13) * Math.sin(t * 4.7)) : 0);
     this.mouth.scale.set(1, 1 + talk * 0.4, 1 + talk * 3);

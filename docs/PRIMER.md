@@ -63,6 +63,15 @@ set c focus=5       move the highlighted lines/rows        arrow note.left c.L5 
 ```
 Leave about 1 unit around parts for labels. A `block` warning means it's too small for its title and ports; enlarge it. A "runs off the board" or "overlaps" warning means move, shorten or shrink it.
 
+**Questions for the learner** (the lesson waits for the answer; you get it back as `[answer] …`)
+```
+quiz "Question?" "option 1" "option 2" "option 3" answer=2 explain="Why."     answer=1,3 if several are right
+pick "Which one is the output layer?" n.L0 n.L1 n.L2 answer=3                  learner points at it on the board
+estimate "Roughly what is e?" 2..3.5 answer=2.718 tol=0.05 unit="…"             slider
+recall "State Ohm's law." "V = I R"                                              flashcard; learner rates themselves
+```
+Ask one after explaining something important, to check it landed, not after every point. Make wrong options plausible (common misconceptions). Keep `explain=` short; it is shown and spoken after the answer.
+
 **Good habits**
 - Name things you'll mention again. Prefer references (`line A B`, `arrow p.right q.left`) to recomputing coordinates; lines drawn between named points follow them when they move.
 - Put things on axes with `on=ax` and use data coordinates.

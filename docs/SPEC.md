@@ -125,9 +125,10 @@ end
 say "Both curves were drawn together."
 ```
 
-Viewers may offer step-by-step playback: each `say` after the first of a burst
-waits for the learner (Space, a button or the VR trigger), so a sentence and the
-drawing that goes with it play as one step.
+A **step** is a sentence (a `say` without `&`) or a question (§4.10), with
+everything up to the next one. Viewers let the learner pause, skip to the
+next step, go back a step, and play step by step: then each step after the
+first of a burst waits for the learner (Space, a button or the VR trigger).
 
 `ease=` controls animation curves: `linear in out inout` (default `inout`).
 
@@ -267,6 +268,32 @@ pink`. The parser lists the valid parts when one is misspelled.
 | `hl` | `ID…` | brief highlight pulse; `color=C`; also parts (`hl n.L1_3`) |
 | `spin` | `ID V` | continuous rotation, degrees/second per axis; `0,0,0` stops |
 | `group` | `ID…` | needs a name; bundles entities so they move/rotate together |
+
+### 4.10 Questions for the learner
+
+A question stops the lesson until the learner answers it, shows whether they
+were right (and `explain=`, if given), then continues when they press
+Continue. Each answer is also sent to the server, which passes it on as an
+`answer` event (IR.md), so a tutor can react to it. Name a question
+(`q1: quiz …`) to label its answer. The name isn't an entity: nothing else can
+refer to it.
+
+| Op | Arguments | Keys |
+|---|---|---|
+| `quiz` | `S S…` | multiple choice: the question, then 2–8 options (or a `<<END` block, an option per line). `answer=N` is the right option's number (1 is the first); `answer=1,3` when several are right (the learner then ticks every right one). `explain=S` |
+| `pick` | `S ID…` | the learner points at the right thing on the board: the question, then 2–12 entities or parts (`n.L1`, `g.r2c3`), each marked with a number. `answer=N` (or `N,N`) as for `quiz`. `explain=S` |
+| `estimate` | `S R` | a slider over the range: `answer=N` is the right value, `tol=N` how close counts as right (default 5% of the range), `step=N` the slider's step, `unit=S`. `explain=S` |
+| `recall` | `S S` | a flashcard: the prompt, then the answer, shown when the learner asks; they say themselves whether they knew it. `explain=S` |
+
+```
+q1: quiz "What does the derivative measure?" "The area under the curve" "The slope at a point" answer=2 explain="It is the rate of change."
+pick "Which layer has the most neurons?" n.L0 n.L1 n.L2 answer=1
+estimate "Roughly what is e?" 2..3.5 answer=2.718 tol=0.05
+recall "State Ohm's law." "V = I R: voltage is current times resistance."
+```
+
+Questions don't go into the replay log: someone who joins later isn't asked
+old ones.
 
 ## 5. Mixed mode (prose + visuals)
 

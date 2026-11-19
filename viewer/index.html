@@ -24,7 +24,12 @@
     </form>
     <span class="spacer"></span>
     <span id="play" hidden></span>
-    <button id="next" hidden title="Next sentence (Space, →, or the VR trigger)">Next ▸</button>
+    <span id="transport" hidden>
+      <button id="back" title="Back a step (←; again within 3 s: the step before)">⏮</button>
+      <button id="pause" title="Pause / resume (Space)">❚❚</button>
+      <button id="fwd" title="Skip to the next step (→)">⏭</button>
+    </span>
+    <button id="next" hidden title="Next step (Space, →, or the VR trigger)">Next ▸</button>
     <label class="check" title="Pause after each sentence and its drawing until you press Space">
       <input type="checkbox" id="step"> step</label>
     <select id="voice" title="Teacher's voice">

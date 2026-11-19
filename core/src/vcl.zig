@@ -23,7 +23,7 @@ pub const version = "0.1";
 
 // ───────────────────────────── schema ─────────────────────────────
 
-pub const Ty = enum { num, vec, point, str, color, range, boolean, id, word };
+pub const Ty = enum { num, vec, point, str, color, range, boolean, id, word, nums };
 
 pub const Param = struct {
     name: []const u8,
@@ -60,6 +60,8 @@ pub const Op = struct {
     needs_name: bool = false,
     /// Kept in the replay log (late joiners rebuild the scene from it).
     replay: bool = true,
+    /// A question for the learner (§4.10): may be named, waits for an answer.
+    question: bool = false,
 };
 
 fn P(name: []const u8, ty: Ty) Param {
@@ -111,6 +113,11 @@ pub const ops = [_]Op{
     .{ .name = "clear", .kind = .flow, .dur = 0.5 },
     .{ .name = "board", .kind = .flow, .pos = &.{.{ .name = "size", .ty = .vec, .opt = true }}, .dur = 0.8 },
     .{ .name = "del", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0.3 },
+    // questions for the learner: playback waits for the answer
+    .{ .name = "quiz", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "options", .ty = .str, .many = true, .min = 2, .max = 8 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "estimate", .kind = .flow, .pos = &.{ P("q", .str), P("range", .range) }, .keys = &.{ P("answer", .num), P("tol", .num), P("step", .num), P("unit", .str), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "recall", .kind = .flow, .pos = &.{ P("q", .str), P("answer", .str) }, .keys = &.{P("explain", .str)}, .dur = 0, .replay = false, .question = true },
     // 2D
     .{ .name = "pt", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{size}, .dur = 0.3 },
     .{ .name = "line", .kind = .draw, .pos = &.{ P("from", .point), P("to", .point) }, .keys = &.{ width, dash }, .dur = 0.6 },
@@ -459,7 +466,7 @@ const LineParser = struct {
         };
         const op = p.op;
         if (name) |n| {
-            if (op.kind != .draw and !op.needs_name)
+            if (op.kind != .draw and !op.needs_name and !op.question)
                 return p.fail("{s}: does not create anything, so it can't be named '{s}'", .{ op.name, n });
         }
         if (op.needs_name and name == null)
@@ -569,6 +576,7 @@ const LineParser = struct {
             dur = fields.items[0].val.num;
         }
         if (std.mem.eql(u8, op.name, "axes")) try p.checkAxes(fields.items);
+        if (op.question) try p.checkQuestion(fields.items);
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
         if (std.mem.eql(u8, op.name, "board")) {
             var b = default_board;
@@ -597,9 +605,11 @@ const LineParser = struct {
         const id: ?[]const u8 = if (op.kind == .draw or op.needs_name) name orelse blk: {
             p.scene.auto_id += 1;
             break :blk std.fmt.bufPrint(&id_buf, "_{d}", .{p.scene.auto_id}) catch unreachable;
-        } else null;
+        } else if (op.question) name else null;
 
-        if (std.mem.eql(u8, op.name, "clear")) {
+        if (op.question) {
+            // A question's name only labels its answer; it isn't on the board.
+        } else if (std.mem.eql(u8, op.name, "clear")) {
             p.scene.reset();
         } else if (op.kind == .change and !std.mem.eql(u8, op.name, "color") and !std.mem.eql(u8, op.name, "hl")) {
             // Moved, turned, scaled or faded: its old extent no longer holds.
@@ -715,6 +725,37 @@ const LineParser = struct {
         try o.writeAll("}\n");
     }
 
+    /// quiz/pick need answer=N (1-based, several for quiz/pick: 1,3) among
+    /// their choices; estimate's answer must lie in its range.
+    fn checkQuestion(p: *LineParser, fields: anytype) Error!void {
+        const op = p.op.name;
+        const choices: ?usize = for (fields) |f| {
+            if (std.mem.eql(u8, f.name, "options") or std.mem.eql(u8, f.name, "ids")) break f.val.list.len;
+        } else null;
+        if (choices) |n| {
+            if (n < 2) return p.fail("{s}: needs at least 2 choices, got {d}", .{ op, n });
+            if (n > (if (op[0] == 'q') @as(usize, 8) else 12)) return p.fail("{s}: at most {d} choices, got {d}", .{ op, @as(usize, if (op[0] == 'q') 8 else 12), n });
+            const answer = for (fields) |f| {
+                if (std.mem.eql(u8, f.name, "answer")) break f.val.list;
+            } else return p.fail("{s}: needs answer=N, the number of the right choice (1 is the first; answer=1,3 if several are right)", .{op});
+            for (answer, 0..) |a, i| {
+                const k = a.num;
+                if (k != @floor(k) or k < 1 or k > @as(f64, @floatFromInt(n)))
+                    return p.fail("{s}: answer {d} isn't one of the choices (1..{d})", .{ op, k, n });
+                for (answer[0..i]) |b| if (b.num == k) return p.fail("{s}: answer {d} listed twice", .{ op, k });
+            }
+        }
+        if (std.mem.eql(u8, op, "estimate")) {
+            const r = fields[1].val.range;
+            const answer = for (fields) |f| {
+                if (std.mem.eql(u8, f.name, "answer")) break f.val.num;
+            } else return p.fail("estimate: needs answer=N, the right value", .{});
+            if (answer < r[0] or answer > r[1]) return p.fail("estimate: answer {d} is outside the slider's range {d}..{d}", .{ answer, r[0], r[1] });
+            for (fields) |f| if (std.mem.eql(u8, f.name, "tol") and f.val.num < 0) return p.fail("estimate: tol must be >= 0", .{});
+            for (fields) |f| if (std.mem.eql(u8, f.name, "step") and f.val.num <= 0) return p.fail("estimate: step must be > 0", .{});
+        }
+    }
+
     fn value(p: *LineParser, param: Param, text: []const u8) Error!Value {
         const op = p.op.name;
         if (text.ptr == heredoc_marker.ptr) {
@@ -724,6 +765,13 @@ const LineParser = struct {
         switch (param.ty) {
             .num => return .{ .num = parseNum(text) orelse
                 return p.fail("{s}: expected a number for '{s}', got '{s}'", .{ op, param.name, text }) },
+            .nums => {
+                var vals: std.ArrayList(Value) = .empty;
+                var it = std.mem.splitScalar(u8, std.mem.trim(u8, text, "\""), ',');
+                while (it.next()) |t| try vals.append(p.arena, .{ .num = parseNum(std.mem.trim(u8, t, " ")) orelse
+                    return p.fail("{s}: expected a number or numbers like 1,3 for '{s}', got '{s}'", .{ op, param.name, text }) });
+                return .{ .list = vals.items };
+            },
             .vec => return .{ .vec = parseVec(text) orelse
                 return p.fail("{s}: expected a vector like 1,2 or 1,2,3 for '{s}', got '{s}'", .{ op, param.name, text }) },
             .range => {
@@ -1860,6 +1908,7 @@ fn tyName(t: Ty) []const u8 {
         .boolean => "true/false",
         .id => "name",
         .word => "word",
+        .nums => "numbers",
     };
 }
 
@@ -1880,6 +1929,7 @@ fn usageHint(op: *const Op) []const u8 {
                         .boolean => "B",
                         .id => "NAME",
                         .word => "W",
+                        .nums => "N,N",
                     };
                     u = u ++ " " ++ (if (prm.opt) "[" else "") ++ prm.name ++ ":" ++ tn ++ (if (prm.many) "…" else "") ++ (if (prm.opt) "]" else "");
                 }
@@ -2922,4 +2972,35 @@ test "contour and step plots are sampled" {
     try testing.expectEqualStrings(
         \\{"op":"diag","level":"error","line":4,"msg":"contour: \"1\" is constant or undefined over this range: no levels to draw"}
     , lines.next().?);
+}
+
+test "questions: quiz, pick, estimate, recall; answers are checked" {
+    try expectOut(
+        \\n: nn 0,0 "3,2" edges=none
+        \\q1: quiz "Slope?" "Area" "Slope" answer=2 explain="Rate."
+        \\quiz "Primes" answer=1,3 <<END
+        \\2
+        \\4
+        \\5
+        \\END
+        \\pick "Output layer?" n.L0 n.L1 answer=2
+        \\estimate "Neurons?" 0..20 answer=5 tol=1 unit="n"
+        \\recall "Overfitting?" "Fitting noise."
+        \\quiz "Q" "A" "B" answer=3
+        \\quiz "Q" "A" "B"
+        \\estimate "Q" 0..1 answer=2
+        \\hl q1
+    ,
+        \\{"op":"nn","id":"n","line":1,"par":false,"dur":1.2,"at":[0,0,0],"layers":"3,2","edges":"none","sizes":[3,2],"shown":[[1,2,3],[1,2]]}
+        \\{"op":"quiz","id":"q1","line":2,"par":false,"dur":0,"q":"Slope?","options":["Area","Slope"],"answer":[2],"explain":"Rate."}
+        \\{"op":"quiz","line":3,"par":false,"dur":0,"q":"Primes","options":["2","4","5"],"answer":[1,3]}
+        \\{"op":"pick","line":8,"par":false,"dur":0,"q":"Output layer?","ids":["n.L0","n.L1"],"answer":[2]}
+        \\{"op":"estimate","line":9,"par":false,"dur":0,"q":"Neurons?","range":[0,20],"answer":5,"tol":1,"unit":"n"}
+        \\{"op":"recall","line":10,"par":false,"dur":0,"q":"Overfitting?","answer":"Fitting noise."}
+        \\{"op":"diag","level":"error","line":11,"msg":"quiz: answer 3 isn't one of the choices (1..2)"}
+        \\{"op":"diag","level":"error","line":12,"msg":"quiz: needs answer=N, the number of the right choice (1 is the first; answer=1,3 if several are right)"}
+        \\{"op":"diag","level":"error","line":13,"msg":"estimate: answer 2 is outside the slider's range 0..1"}
+        \\{"op":"diag","level":"error","line":14,"msg":"hl: unknown name 'q1'"}
+        \\
+    );
 }

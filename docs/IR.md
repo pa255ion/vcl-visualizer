@@ -66,6 +66,18 @@ Not commands and never replayed. A renderer shows them on the teacher:
 The tutor (`tools/tutor`) listens for `ask`, streams Claude's reply back in
 mixed mode, and posts `status` around each turn.
 
+A viewer posts each answer to a question (SPEC §4.10) to `POST /answer` as a
+JSON object; the server broadcasts it with `"op":"answer"`:
+
+```json
+{"op":"answer","id":"q1","line":12,"kind":"quiz","q":"…","given":[1],"correct":false,"skipped":false,"options":["…","…"],"answer":[2]}
+```
+
+`given` is the chosen numbers (quiz, pick: 1-based), the value (estimate), or
+true/false (recall: "I knew it"); `null` when skipped. A pick answer carries
+`ids`, an estimate `answer` and `unit`. The tutor reacts to answers to the
+questions it asked.
+
 ### Diagnostics
 
 ```json
@@ -95,6 +107,19 @@ comes, until the learner asks for the next step, then shift it and everything
 queued behind it by the time spent waiting. Commands that arrive meanwhile are
 scheduled from `T` as usual, not from `now`. The WebXR viewer holds every `say`
 after the first of a burst (a burst ends when the timeline runs empty).
+
+**Questions** (`quiz`, `pick`, `estimate`, `recall`) hold the timeline the same
+way, from their start until the learner answers and continues; only that
+releases them, not "next step". Their `dur` is 0.
+
+**Steps, pause, back and forward** (both viewers): number the steps as
+commands arrive (a step starts at each non-`par` `say` and each question) and
+keep every command with its step. Pausing stops the timeline's clock (and the
+speech). Forward finishes the current step's commands at once (talk, waits and
+questions are dropped, not run) and starts the next step now. Back resets the
+scene and re-runs every kept command: those before the target step instantly,
+the rest scheduled as usual. `viewer/js/runtime.js` (`forward`, `back`,
+`seek`) is the reference.
 
 ## Sampled plots and surfaces
 

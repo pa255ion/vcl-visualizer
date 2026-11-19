@@ -15,6 +15,7 @@ import { compile } from './expr.js';
 import { TextPlane } from './text.js';
 import * as D from './draw.js';
 import { addCharts } from './charts.js';
+import { QuestionCard } from './questions.js';
 
 export const FG = '#e8edf3';
 const PALETTE = ['#42a5f5', '#ffa726', '#66bb6a', '#f06292', '#ab47bc', '#26a69a', '#ffee58'];
@@ -29,6 +30,11 @@ const DRAWABLE = new Set(['line', 'arrow', 'path', 'poly', 'rect', 'circle', 'an
 const V = (a) => new THREE.Vector3(a[0], a[1], a[2] ?? 0);
 const isRef = (p) => p && !Array.isArray(p) && typeof p === 'object';
 const DEG = Math.PI / 180;
+const QUESTIONS = new Set(['quiz', 'pick', 'estimate', 'recall']);
+/** A step starts at each sentence (a `say` without `&`) and each question. */
+const startsStep = (c) => (c.op === 'say' && !c.par) || QUESTIONS.has(c.op);
+/** Not replayed when jumping past them: talk, pauses and questions. */
+const QUIET = new Set(['say', 'point', 'wait', ...QUESTIONS]);
 const backOut = (p) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); };
 
 // ───────────────────────────── Entity ─────────────────────────────
@@ -134,23 +140,163 @@ export class Runtime {
   constructor({ stage, board = null, camera, avatar = null, voice = null, log = console.log }) {
     this.stage = stage;
     this.board = board; // Board (board.js), resized by `board`
-    /** Step mode: hold each `say` after the first of a burst until next(). */
+    /** Step mode: hold each step after the first of a burst until next(). */
     this.stepping = false;
     this.saysInBurst = 0;
+    /** Everything run since the last reset, with its step: what going back replays. */
+    this.history = [];
+    this.steps = 0;   // steps numbered so far (1 is the first sentence or question)
+    this.step = 0;    // the step playing, or last played
+    this.stepAt = 0;  // when it began (runtime clock)
+    this.clockOffset = 0;
+    this.pausedAt = null;
+    this.question = null; // the open QuestionCard
+    this.results = new Map(); // question cmd → { correct, skipped, … }
+    this.onBegin = null;  // (task) => void, as each task starts
+    this.onAnswer = null; // (answer) => void, for the server and the tutor
     this.camera = camera;
     this.avatar = avatar;
     this.voice = voice;
     this.log = log;
     this.entities = new Map();
     this.timeline = new Timeline((e, t) => this.log('error', `line ${t.cmd?.line ?? '?'}: ${t.cmd?.op}: ${e.message}`));
+    this.timeline.onBegin = (t) => {
+      if (t.startsStep) { this.step = t.step; this.stepAt = this.now(); }
+      this.onBegin?.(t);
+    };
     this.gltf = new GLTFLoader();
     this.texLoader = new THREE.TextureLoader();
     this.texLoader.setCrossOrigin('anonymous');
   }
 
-  now() { return performance.now() / 1000; }
+  /** The timeline's clock: real seconds, stopped while paused. */
+  now() { return (this.pausedAt ?? performance.now() / 1000) - this.clockOffset; }
 
-  exec(cmd, { instant = false } = {}) {
+  get paused() { return this.pausedAt !== null; }
+
+  pause() {
+    if (this.paused) return;
+    this.pausedAt = performance.now() / 1000;
+    this.voice?.pause();
+    if (this.avatar) this.avatar.paused = true;
+  }
+
+  resume() {
+    if (!this.paused) return;
+    this.clockOffset += performance.now() / 1000 - this.pausedAt;
+    this.pausedAt = null;
+    this.voice?.resume();
+    if (this.avatar) this.avatar.paused = false;
+  }
+
+  togglePause() { if (this.paused) this.resume(); else this.pause(); }
+
+  /**
+   * What playback is doing: 'question' (waiting for an answer), 'paused',
+   * 'waiting' (step mode, for next()), 'playing', or 'idle'.
+   */
+  get state() {
+    if (this.question && !this.question.answered) return 'question';
+    if (this.paused) return 'paused';
+    if (this.timeline.waiting && !this.timeline.waiting.question) return 'waiting';
+    if (this.timeline.busy || this.question) return 'playing';
+    return 'idle';
+  }
+
+  /** Right answers out of those given (skipped ones don't count). */
+  get score() {
+    let right = 0, total = 0;
+    for (const r of this.results.values()) if (!r.skipped) { total++; if (r.correct) right++; }
+    return { right, total };
+  }
+
+  /** Skip the rest of this step (an open question counts as skipped) and play the next. */
+  forward() {
+    this.resume();
+    const tl = this.timeline, now = this.now();
+    if (tl.waiting && !tl.waiting.question) return tl.release(now);
+    if (!tl.busy && !this.question) return false;
+    if (this.question && !this.question.answered) this.question.skip();
+    else if (this.question) this.closeQuestion();
+    this.voice?.stop();
+    this.avatar?.silence?.();
+    // Between steps (in a wait, say), just start the next one now.
+    const head = tl.queue[0];
+    const cur = tl.active.length || (head && (head.step ?? 0) <= this.step) ? this.step : (head?.step ?? 1) - 1;
+    tl.finishThrough(cur, now, (t) => QUIET.has(t.cmd?.op));
+    return true;
+  }
+
+  /** Back to the start of this step if it has played a while, else the one before. */
+  back() {
+    if (!this.steps) return false;
+    const into = this.now() - this.stepAt;
+    this.seek(into > 3 || !this.step ? Math.max(1, this.step) : this.step - 1);
+    return true;
+  }
+
+  /** Jump to the start of step n: rebuild the board as it was then and play on from there. */
+  seek(n) {
+    if (!this.steps) return;
+    n = Math.max(1, Math.min(this.steps, n));
+    const hist = this.history;
+    this.reset({ keep: true });
+    this.board?.apply([16, 9, 0]);
+    for (const h of hist) if (h.instant || h.step < n) this.exec(h.cmd, { instant: true, step: h.step });
+    for (const h of hist) if (!h.instant && h.step >= n) this.exec(h.cmd, { step: h.step });
+    this.step = n;
+    this.stepAt = this.now();
+  }
+
+  /** Speak outside the timeline (the teacher's reaction to an answer). */
+  speak(text) {
+    const c = { op: 'say', text };
+    this.voice?.prepare(c);
+    this.avatar?.say(text, c.dur ?? text.split(/\s+/).length * 0.4);
+    this.voice?.play(c);
+  }
+
+  ask(cmd, gate) {
+    this.closeQuestion();
+    const card = new QuestionCard(this, cmd, {
+      done: (r) => {
+        this.results.set(cmd, r);
+        if (!r.skipped) {
+          const reaction = cmd.op === 'recall' ? (r.correct ? 'Good.' : 'That one is worth another look.') : r.correct ? 'Correct.' : 'Not quite.';
+          this.speak(cmd.explain ? `${reaction} ${cmd.explain}` : reaction);
+        }
+        this.onAnswer?.({
+          id: cmd.id ?? null, line: cmd.line, kind: cmd.op, q: cmd.q,
+          given: r.given, correct: r.correct, skipped: r.skipped,
+          ...(cmd.op === 'quiz' ? { options: cmd.options, answer: cmd.answer } : {}),
+          ...(cmd.op === 'pick' ? { ids: cmd.ids, answer: cmd.answer } : {}),
+          ...(cmd.op === 'estimate' ? { answer: cmd.answer, unit: cmd.unit } : {}),
+          ...(cmd.op === 'recall' ? { answer: cmd.answer } : {}),
+        });
+      },
+      onContinue: () => {
+        if (this.question !== card) return;
+        this.closeQuestion();
+        this.voice?.stop();
+        // Open the gate (it may not be holding yet) and play the next step without another press.
+        gate.gate = false;
+        if (this.timeline.waiting === gate) this.timeline.release(this.now(), true);
+        const next = this.timeline.queue[0];
+        if (next?.gate && !next.question) next.gate = false;
+      },
+    });
+    this.question = card;
+  }
+
+  closeQuestion() {
+    this.question?.dispose();
+    this.question = null;
+  }
+
+  /** Everything the learner can press on the board right now. */
+  get hits() { return this.question?.hits ?? []; }
+
+  exec(cmd, { instant = false, step = null } = {}) {
     if (cmd.op === 'diag') return this.log(cmd.level, `line ${cmd.line}: ${cmd.msg}`);
     if (cmd.op === 'replay') {
       this.reset();
@@ -160,6 +306,12 @@ export class Runtime {
     }
     const h = this.handlers[cmd.op];
     if (!h) return this.log('warning', `viewer: unsupported op '${cmd.op}'`);
+    // Remember it with its step, so going back can replay it (unless this is that replay).
+    if (step === null) {
+      if (!instant && startsStep(cmd)) this.steps++;
+      step = this.steps;
+      this.history.push({ cmd, step, instant });
+    }
     // Real speech: synthesize now so the timeline knows exactly how long it lasts.
     if (cmd.op === 'say' && !instant) this.voice?.prepare(cmd);
     const task = h.call(this, cmd);
@@ -167,15 +319,22 @@ export class Runtime {
     task.dur = cmd.dur ?? 0;
     task.par = cmd.par;
     task.ease = cmd.ease;
+    task.step = step;
+    task.startsStep = !instant && startsStep(cmd);
     if (!instant && !this.timeline.busy) this.saysInBurst = 0; // a new burst (lesson run, tutor reply)
-    if (cmd.op === 'say' && !instant) {
-      task.gate = this.stepping && !cmd.par && this.saysInBurst > 0;
+    if (task.startsStep && !QUESTIONS.has(cmd.op)) {
+      task.gate = this.stepping && this.saysInBurst > 0;
       this.saysInBurst++;
     }
     if (instant) {
-      if (cmd.op === 'say' || cmd.op === 'point' || cmd.op === 'wait') return;
+      if (QUIET.has(cmd.op)) return;
       this.timeline.runNow(task);
-    } else this.timeline.add(task, this.now());
+      return;
+    }
+    const now = this.now();
+    this.timeline.add(task, now);
+    // A question holds the lesson until it is answered (or skipped).
+    if (task.gate$) this.timeline.add(Object.assign(task.gate$, { step }), now);
   }
 
   /** Step mode: let the next sentence (and what comes with it) play. */
@@ -183,16 +342,28 @@ export class Runtime {
 
   get waiting() { return !!this.timeline.waiting; }
 
-  reset() {
+  /** Drop everything. `keep`: keep the history (going back rebuilds from it). */
+  reset({ keep = false } = {}) {
     this.timeline.reset();
     this.saysInBurst = 0;
+    this.closeQuestion();
+    this.voice?.stop();
+    this.resume();
     for (const id of [...this.entities.keys()]) this.remove(id);
     this.avatar?.point(null);
+    this.step = 0;
+    if (!keep) {
+      this.history = [];
+      this.steps = 0;
+      this.results.clear();
+    }
   }
 
   update(dt) {
     const now = this.now();
     this.timeline.tick(now);
+    this.question?.update(dt);
+    if (this.paused) dt = 0;
     const camQ = this.camera.getWorldQuaternion(new THREE.Quaternion());
     const q = new THREE.Quaternion();
     for (const e of this.entities.values()) {
@@ -354,6 +525,12 @@ const H = {};
 Runtime.prototype.handlers = H;
 
 H.wait = () => ({});
+for (const op of QUESTIONS) {
+  H[op] = function (c) {
+    const gate = { gate: true, question: true, dur: 0, cmd: c };
+    return { begin: () => this.ask(c, gate), gate$: gate };
+  };
+}
 H.say = function (c) {
   return { begin: () => { this.avatar?.say(c.text, c.dur); this.voice?.play(c); } };
 };
