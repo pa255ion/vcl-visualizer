@@ -58,11 +58,18 @@
         <option value="vcl">vcl</option>
         <option value="mixed">mixed</option>
       </select>
+      <button id="open" title="Open a lesson file from this computer (.vcl, .md or .txt); you can also drop one on the editor">Open…</button>
+      <input type="file" id="open-file" accept=".vcl,.md,.markdown,.txt,text/plain,text/markdown" hidden>
     </div>
-    <label class="check" title="Selecting another lesson stops the current one and wipes the board">
-      <input type="checkbox" id="autoclear"> clear the board when switching lessons</label>
+    <div class="row checks">
+      <label class="check" title="Selecting another lesson stops the current one and wipes the board">
+        <input type="checkbox" id="autoclear"> clear board on switch</label>
+      <label class="check" title="Wrap long lines in the editor">
+        <input type="checkbox" id="wrap"> wrap lines</label>
+    </div>
     <div id="editor-wrap">
       <div id="cur-line" hidden></div>
+      <div id="editor-mirror" aria-hidden="true"></div>
       <textarea id="editor" wrap="off" spellcheck="false" placeholder="ax: axes 0,0 x=-4..4 y=-3..3&#10;plot ax &quot;sin(x)&quot;&#10;say &quot;Here is a sine wave.&quot;"></textarea>
     </div>
     <div class="row">

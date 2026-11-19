@@ -51,7 +51,7 @@ zig build                   # zig-out/bin/vcl + viewer/vcl.wasm
 zig build run -- serve      # http://127.0.0.1:8080
 ```
 
-Open http://127.0.0.1:8080, click **Editor**, pick a lesson, press **Run** (Ctrl+Enter).
+Open http://127.0.0.1:8080, click **Editor**, pick a lesson (or **Open…** a `.vcl`/`.md` file from your computer, or drop one on the editor), press **Run** (Ctrl+Enter). "wrap lines" soft-wraps long lines.
 
 Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
 go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then

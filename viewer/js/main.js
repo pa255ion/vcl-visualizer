@@ -316,6 +316,42 @@ async function loadLesson(name) {
   modeSel.value = name.endsWith('.md') ? 'mixed' : 'vcl';
 }
 const lessonSel = $('#lessons');
+
+// Lesson files from this computer: the Open… button, or dropped on the editor.
+const LESSON_FILE = /\.(vcl|md|markdown|txt)$/i;
+async function openFile(file) {
+  if (!file) return;
+  if (!LESSON_FILE.test(file.name) && !/^text\//.test(file.type)) throw new Error(`${file.name}: not a lesson (open a .vcl, .md or .txt file)`);
+  if (file.size > 2e6) throw new Error(`${file.name}: too big for a lesson (${(file.size / 1e6).toFixed(1)} MB)`);
+  const text = await file.text();
+  if (text.includes('\0')) throw new Error(`${file.name}: not a text file`);
+  if ($('#autoclear').checked) await stopAndClear();
+  editor.value = text;
+  editor.scrollTop = 0;
+  markLine(0);
+  // Markdown, or any text with ```vcl fences, runs as mixed prose.
+  modeSel.value = /\.(md|markdown)$/i.test(file.name) || /^```vcl\b/m.test(text) ? 'mixed' : 'vcl';
+  lessonSel.value = '';
+  log('info', `opened ${file.name} (${modeSel.value}); press Run to play it`);
+}
+const fileInput = $('#open-file');
+$('#open').onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  openFile(fileInput.files[0]).catch((e) => log('error', e.message)).finally(() => { fileInput.value = ''; });
+};
+editor.addEventListener('dragover', (e) => {
+  if (![...(e.dataTransfer?.types ?? [])].includes('Files')) return;
+  e.preventDefault();
+  editor.classList.add('dropping');
+});
+editor.addEventListener('dragleave', () => editor.classList.remove('dropping'));
+editor.addEventListener('drop', (e) => {
+  editor.classList.remove('dropping');
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return; // dropped text: the textarea inserts it as usual
+  e.preventDefault();
+  openFile(file).catch((err) => log('error', err.message));
+});
 fetch(`lessons/index.json${VQ}`).then((r) => r.json()).then((list) => {
   for (const l of list) lessonSel.add(new Option(l.title, l.file));
   // The server's lesson library, one group per folder.
@@ -360,13 +396,28 @@ function markLine(n) {
   markedLine = n;
   curLine.hidden = !n;
   if (!n) return;
-  const lh = parseFloat(getComputedStyle(editor).lineHeight) || 19.5;
+  let lh = parseFloat(getComputedStyle(editor).lineHeight) || 19.5;
   const pad = parseFloat(getComputedStyle(editor).paddingTop) || 10;
-  const y = pad + (n - 1) * lh;
+  let y = pad + (n - 1) * lh;
+  if (editor.classList.contains('wrap')) ({ y, h: lh } = wrappedLine(n));
   if (document.body.classList.contains('editing') && (y < editor.scrollTop || y + lh > editor.scrollTop + editor.clientHeight))
     editor.scrollTop = Math.max(0, y - editor.clientHeight / 3);
   curLine.style.height = `${lh}px`;
   curLine.style.transform = `translateY(${y - editor.scrollTop}px)`;
+}
+/** Where line n sits when lines wrap: lay the text out in a hidden copy of the editor. */
+const mirror = $('#editor-mirror');
+function wrappedLine(n) {
+  const lines = editor.value.split('\n');
+  mirror.style.width = `${editor.clientWidth + 2}px`; // + the border: the same text width
+  const mark = document.createElement('span');
+  mark.textContent = lines[n - 1] || ' ';
+  mirror.replaceChildren(lines.slice(0, n - 1).map((l) => l + '\n').join(''), mark);
+  const rects = mark.getClientRects(), top = mirror.getBoundingClientRect().top;
+  if (!rects.length) return { y: 0, h: 19.5 };
+  const y = rects[0].top - top, h = rects[rects.length - 1].bottom - top - y;
+  mirror.replaceChildren();
+  return { y, h };
 }
 editor.addEventListener('scroll', () => markedLine && markLine(markedLine));
 editor.addEventListener('input', () => markLine(0)); // edited: the numbers no longer match
@@ -379,6 +430,12 @@ function setting(id, key, def, onChange = () => {}) {
   onChange(el.checked);
 }
 setting('#autoclear', 'vcl.autoclear', true);
+setting('#wrap', 'vcl.wrap', false, (on) => {
+  editor.classList.toggle('wrap', on);
+  editor.wrap = on ? 'soft' : 'off';
+  if (markedLine) markLine(markedLine);
+});
+new ResizeObserver(() => markedLine && editor.classList.contains('wrap') && markLine(markedLine)).observe(editor);
 setting('#step', 'vcl.step', false, (on) => {
   runtime.stepping = on;
   $('#next').hidden = !on;
