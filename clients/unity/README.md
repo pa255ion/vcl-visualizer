@@ -69,17 +69,36 @@ Two ways to set that up:
 | | Headset | Desktop |
 |---|---|---|
 | Lesson menu | A or X | M (arrows, Enter, Esc) |
-| Next step (step mode) | trigger | Space, →, Enter |
-| Step mode on/off | B or Y | S |
+| Press a button (menu, question, transcript) | point, trigger | mouse |
+| Pause / resume | B or Y | Space |
+| Back / forward a step | thumbstick left / right | ← / → |
+| Next step (step mode) | trigger | Space, Enter |
+| Step mode on/off | menu | S |
 | Recentre | thumbstick click | |
 | Upright ↔ reclined | hold thumbstick click (0.8 s) | |
 
-The menu also has a **Voice** switch (robot voice or subtitles only), which is
-remembered.
+Going **back** restarts the current step if it has played for more than 3
+seconds, else goes to the one before. **Forward** skips the rest of the step
+(an open question counts as skipped).
+
+The **transcript** beside the board lists the lesson's sentences and questions
+(✓ right, ✗ wrong, – skipped), the current one marked. It has back, pause and
+forward buttons, and pointing at a line and pulling the trigger jumps there.
+It also shows when the lesson has **finished**, with the score if it asked
+questions; the teacher's subtitle says so too.
+
+**Questions** (`quiz`, `pick`, `estimate`, `recall`) appear on a card in front
+of the board: point and pull the trigger to answer (for `pick`, at the
+numbered markers on the board; for `estimate`, hold the trigger on the slider
+and move). The card shows what was right, the teacher says why, and Continue
+goes on. Answers go to the server for the tutor.
+
+The menu also has a **Voice** switch (robot voice or subtitles only) and a
+**Transcript** switch, both remembered.
 
 The **menu** lists the server's built-in lessons and its `--lessons` library,
 one folder per subfolder; point with either controller and pull the trigger.
-It also has Stop, step mode, and Upright/Recline. Picking a lesson clears the
+It also has Stop, step mode, Upright/Recline, Voice and Transcript. Picking a lesson clears the
 board and posts the lesson to the server, so every connected viewer plays it.
 
 **Reclined** (for lying down): recentring aligns the whole room with your view,

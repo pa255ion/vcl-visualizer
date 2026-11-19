@@ -118,7 +118,24 @@ namespace Vcl
 
         public void Stop()
         {
-            if (source.isPlaying) source.Stop();
+            if (source.isPlaying || paused) source.Stop();
+            paused = false;
+        }
+
+        bool paused;
+
+        public void Pause()
+        {
+            if (!source.isPlaying) return;
+            source.Pause();
+            paused = true;
+        }
+
+        public void Resume()
+        {
+            if (!paused) return;
+            source.UnPause();
+            paused = false;
         }
 
         public bool Speaking => source.isPlaying;

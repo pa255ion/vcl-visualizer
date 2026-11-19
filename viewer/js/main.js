@@ -168,6 +168,8 @@ function onCmd(cmd) {
     avatar.hear(`You: ${cmd.text}`);
   } else if (cmd.op === 'status') {
     avatar.thinking = cmd.text === 'thinking';
+  } else if (cmd.op === 'answer') {
+    // An answer (ours or another viewer's), for the tutor.
   } else {
     if (tagEditor && cmd.line) cmd.editorLine = cmd.line;
     runtime.exec(cmd, { instant: cmd.op === 'replay' });

@@ -273,6 +273,11 @@ namespace Vcl.EditorTools
             void Render(string path)
             {
                 app.Runtime.Timeline.Flush();
+                RenderKeep(path);
+            }
+            // Render without running what is queued (a question is open).
+            void RenderKeep(string path)
+            {
                 app.FitCamera();
                 app.Runtime.Update(0);
                 app.Avatar.Update(0.01f, cam.transform.position);
@@ -305,6 +310,21 @@ namespace Vcl.EditorTools
                         if (app.Runtime.Entities.Count > 0) Render(Path.Combine(dir, $"{name}-{++k}.png"));
                     }
                     app.Feed(line);
+                    // VCL_QUESTIONS=1: each question as asked, then answered (wrong, then the rest right).
+                    if (dir != null && Env("VCL_QUESTIONS") != null && System.Text.RegularExpressions.Regex.IsMatch(line, "\"op\":\"(quiz|pick|estimate|recall)\""))
+                    {
+                        app.Runtime.Timeline.Tick(app.Runtime.Now + 1000);
+                        var q = app.Runtime.Question;
+                        if (q == null) { Debug.LogWarning("[vcl] question didn't open"); continue; }
+                        RenderKeep(Path.Combine(dir, $"{name}-q{++k}a.png"));
+                        var c = q.Cmd;
+                        object given = c.Op == "estimate" ? (object)(c.Num("answer", 0) + (k % 2 == 0 ? 0 : c.Range("range")[1] * 0.2))
+                            : c.Op == "recall" ? (object)true
+                            : (k % 2 == 1 ? new List<object> { (double)(c.List("answer").Count == 1 && (double)c.List("answer")[0] == 1 ? 2 : 1) } : c.List("answer"));
+                        q.Submit(given);
+                        RenderKeep(Path.Combine(dir, $"{name}-q{k}b.png"));
+                        app.Runtime.Forward();
+                    }
                 }
                 Render(dir != null ? Path.Combine(dir, $"{name}-{++k}.png") : shot);
             }

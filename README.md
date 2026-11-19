@@ -28,6 +28,7 @@ LLM reply ──text chunks──▶ vcl serve (Zig) ──JSON IR over WebSocke
 | Your files | `svg` (URL or inline), `img`, 3D `model`s from glTF/GLB, STL and OBJ |
 | 3D | boxes, spheres, cylinders, models; rotate, spin, and walk around them in VR |
 | Teaching | `say`, `point` (the robot points), `hl` pulses, `set … focus=` steps through code/tables, timed and parallel beats |
+| Questions | `quiz` (multiple choice), `pick` (point at it on the board), `estimate` (slider), `recall` (flashcard); the lesson waits for the answer, explains, and reports it to the tutor |
 
 Pins (`R1.a`, `cpu.clk`, `c.L3`, `t.R2`, `w.clk`) work anywhere a point does,
 so wires and arrows attach to the right spot without the model computing
@@ -163,6 +164,12 @@ In VR:
 | Right stick forward / back | move the board farther / closer |
 | Left stick forward / back | raise / lower the board |
 | A or X, hold | push-to-talk, if the Quest browser offers speech recognition |
+| B or Y | pause / resume |
+| Stick left / right | back / forward a step |
+| Trigger | press a question's buttons (point at them), else next step in step mode |
+
+On the desktop: ⏮ ⏯ ⏭ in the top bar, or ←, Space, →. Questions are
+answered with the mouse.
 
 Distance and height are remembered on each device.
 

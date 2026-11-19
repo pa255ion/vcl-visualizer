@@ -94,11 +94,21 @@ namespace Vcl
         }
 
         /// <summary>Show what the learner asked (or a status line) in the subtitle strip.</summary>
-        public void Hear(string text, bool isThinking = true)
+        public void Hear(string text, bool isThinking = true, float secs = 4)
         {
             thinking = isThinking;
             subColor = Draw.Hex("#9fb4cc");
-            Subtitle(text, 4);
+            Subtitle(text, secs);
+        }
+
+        /// <summary>Paused: the subtitles, pointing and the mouth wait too.</summary>
+        public bool Paused;
+
+        /// <summary>Stop talking now (the step was skipped).</summary>
+        public void Silence()
+        {
+            speakUntil = t;
+            subUntil = Mathf.Min(subUntil, t + 0.3f);
         }
 
         public void Say(string text, float dur, AudioClip clip = null)
@@ -136,6 +146,12 @@ namespace Vcl
 
         public void Update(float dt, Vector3 viewer)
         {
+            if (Paused)
+            {
+                if (speakUntil > t) speakUntil += dt;
+                if (subUntil > t) subUntil += dt;
+                if (pointUntil > t) pointUntil += dt;
+            }
             t += dt;
             var p = Root.localPosition;
             p.y = baseY + Mathf.Sin(t * 1.6f) * 0.012f;
@@ -173,7 +189,7 @@ namespace Vcl
                 dot.localScale = Vector3.one * 0.036f * (1 + 0.25f * Mathf.Sin(t * 8));
             }
 
-            bool speaking = t < speakUntil || Voice.Speaking;
+            bool speaking = (t < speakUntil && !Paused) || Voice.Speaking;
             float talk = Voice.Speaking ? Voice.Level()
                 : speaking ? 0.5f + 0.5f * Mathf.Abs(Mathf.Sin(t * 13) * Mathf.Sin(t * 4.7f)) : 0;
             mouth.localScale = new Vector3(0.016f * (1 + talk * 3), 0.034f, 0.01f);

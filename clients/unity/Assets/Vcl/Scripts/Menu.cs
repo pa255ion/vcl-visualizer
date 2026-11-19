@@ -30,7 +30,7 @@ namespace Vcl
 
         const float Scale = 0.05f;         // panel units → metres
         const float W = 22, H = 16, RowH = 1.12f;
-        const int PerPage = 9;
+        const int PerPage = 8;
 
         public bool Open => root && root.gameObject.activeSelf;
         public List<LessonInfo> Lessons = new List<LessonInfo>();
@@ -38,8 +38,8 @@ namespace Vcl
 
         // What the app does for us.
         public Action<LessonInfo> Play;
-        public Action Stop, ToggleStep, ToggleVoice, Upright, Recline, Refresh;
-        public Func<bool> Stepping, Reclined, Voiced;
+        public Action Stop, ToggleStep, ToggleVoice, ToggleTranscript, Upright, Recline, Refresh;
+        public Func<bool> Stepping, Reclined, Voiced, TranscriptShown;
 
         Transform root, content;
         readonly List<Button> buttons = new List<Button>();
@@ -108,11 +108,13 @@ namespace Vcl
 
             // Header: where we are, and the actions.
             Label(folder == null ? "Lessons" : Short(folder, 14), new Vector3(left, top, 0), 0.95f, Draw.FG, "left", true);
-            float x = right;
-            x = ActionButton(x, top, Reclined() ? "Upright" : "Recline", () => { if (Reclined()) Upright(); else Recline(); Rebuild(); });
-            x = ActionButton(x, top, Stepping() ? "Step: on" : "Step: off", () => { ToggleStep(); Rebuild(); });
-            x = ActionButton(x, top, Voiced() ? "Voice: on" : "Voice: off", () => { ToggleVoice(); Rebuild(); });
-            ActionButton(x, top, "Stop", () => { Stop(); Rebuild(); });
+            ActionButton(right, top, "Stop", () => { Stop(); Rebuild(); });
+            // Settings, on a row of their own.
+            float x = right, row2 = top - 1.25f;
+            x = ActionButton(x, row2, Reclined() ? "Upright" : "Recline", () => { if (Reclined()) Upright(); else Recline(); Rebuild(); });
+            x = ActionButton(x, row2, Stepping() ? "Step: on" : "Step: off", () => { ToggleStep(); Rebuild(); });
+            x = ActionButton(x, row2, Voiced() ? "Voice: on" : "Voice: off", () => { ToggleVoice(); Rebuild(); });
+            ActionButton(x, row2, TranscriptShown() ? "Transcript: on" : "Transcript: off", () => { ToggleTranscript(); Rebuild(); });
 
             // Rows: folders, or the lessons of one folder.
             var rows = new List<(string text, Action act, string hint)>();
@@ -136,7 +138,7 @@ namespace Vcl
             }
             int pages = Mathf.Max(1, (rows.Count + PerPage - 1) / PerPage);
             page = Mathf.Clamp(page, 0, pages - 1);
-            float y = top - 1.5f;
+            float y = top - 2.75f;
             foreach (var r in rows.Skip(page * PerPage).Take(PerPage))
             {
                 AddButton(new Rect(left - 0.2f, y - RowH / 2 + 0.06f, right - left + 0.4f, RowH - 0.12f), "#16202c", r.act);
@@ -156,7 +158,7 @@ namespace Vcl
                 Label($"{page + 1} / {pages}", new Vector3(0, fy, -0.02f), 0.55f, Draw.Hex("#8a98ab"));
             }
             Label(Status, new Vector3(0, fy - 0.95f, -0.02f), 0.45f, Draw.Hex("#8a98ab"));
-            Label("trigger: choose · stick: page · A/X: close", new Vector3(0, -H / 2 - 0.6f, -0.02f), 0.45f, Draw.Hex("#6b7a8f"));
+            Label("trigger: choose · stick: page · A/X: close · B/Y: pause · stick ◀ ▶: step", new Vector3(0, -H / 2 - 0.6f, -0.02f), 0.45f, Draw.Hex("#6b7a8f"));
         }
 
         float ActionButton(float right, float y, string text, Action act)

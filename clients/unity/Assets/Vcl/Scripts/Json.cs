@@ -10,6 +10,57 @@ namespace Vcl
 {
     public static class Json
     {
+        /// <summary>The reverse: write what Parse makes (and ints, floats, any IList/IDictionary).</summary>
+        public static string Write(object v)
+        {
+            var sb = new StringBuilder();
+            WriteTo(sb, v);
+            return sb.ToString();
+        }
+
+        static void WriteTo(StringBuilder sb, object v)
+        {
+            switch (v)
+            {
+                case null: sb.Append("null"); break;
+                case bool b: sb.Append(b ? "true" : "false"); break;
+                case string s:
+                    sb.Append('"');
+                    foreach (var c in s)
+                    {
+                        if (c == '"' || c == '\\') sb.Append('\\').Append(c);
+                        else if (c == '\n') sb.Append("\\n");
+                        else if (c < ' ') sb.Append("\\u").Append(((int)c).ToString("x4"));
+                        else sb.Append(c);
+                    }
+                    sb.Append('"');
+                    break;
+                case double d: sb.Append(double.IsFinite(d) ? d.ToString("R", CultureInfo.InvariantCulture) : "null"); break;
+                case float f: WriteTo(sb, (double)f); break;
+                case int n: sb.Append(n.ToString(CultureInfo.InvariantCulture)); break;
+                case System.Collections.IDictionary dict:
+                    sb.Append('{');
+                    bool first = true;
+                    foreach (System.Collections.DictionaryEntry kv in dict)
+                    {
+                        if (!first) sb.Append(',');
+                        first = false;
+                        WriteTo(sb, kv.Key.ToString());
+                        sb.Append(':');
+                        WriteTo(sb, kv.Value);
+                    }
+                    sb.Append('}');
+                    break;
+                case System.Collections.IEnumerable list:
+                    sb.Append('[');
+                    bool firstItem = true;
+                    foreach (var x in list) { if (!firstItem) sb.Append(','); firstItem = false; WriteTo(sb, x); }
+                    sb.Append(']');
+                    break;
+                default: WriteTo(sb, v.ToString()); break;
+            }
+        }
+
         public static object Parse(string s)
         {
             int i = 0;
@@ -112,6 +163,9 @@ namespace Vcl
     {
         public readonly Dictionary<string, object> F;
         public Cmd(Dictionary<string, object> f) { F = f; }
+
+        /// <summary>A say's synthesized speech, kept so replaying it (going back) needn't redo it.</summary>
+        public (UnityEngine.AudioClip clip, double dur)? Spoken;
 
         public string Op => Str("op");
         public string Id => Str("id");

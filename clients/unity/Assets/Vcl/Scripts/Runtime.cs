@@ -216,9 +216,27 @@ namespace Vcl
         readonly Dictionary<Transform, Entity> byObj = new Dictionary<Transform, Entity>();
         public readonly Timeline Timeline;
 
-        /// <summary>Step mode: hold each `say` after the first of a burst until Next().</summary>
+        /// <summary>Step mode: hold each step after the first of a burst until Next().</summary>
         public bool Stepping;
         int saysInBurst;
+
+        static readonly HashSet<string> Questions = new HashSet<string> { "quiz", "pick", "estimate", "recall" };
+        /// <summary>Not replayed when jumping past them: talk, pauses and questions.</summary>
+        static readonly HashSet<string> Quiet = new HashSet<string> { "say", "point", "wait", "quiz", "pick", "estimate", "recall" };
+        /// <summary>A step starts at each sentence (a `say` without `&`) and each question.</summary>
+        static bool StartsStep(Cmd c) => (c.Op == "say" && !c.Par) || Questions.Contains(c.Op);
+
+        /// <summary>Everything run since the last reset, with its step: what going back replays.</summary>
+        public readonly List<(Cmd cmd, int step, bool instant)> History = new List<(Cmd, int, bool)>();
+        public int Steps { get; private set; }  // steps numbered so far (1 is the first)
+        public int Step { get; private set; }   // the step playing, or last played
+        double stepAt;
+        double clockOffset;
+        double? pausedAt;
+        public QuestionCard Question { get; private set; }
+        public readonly Dictionary<Cmd, QuestionResult> Results = new Dictionary<Cmd, QuestionResult>();
+        public Action<Task> OnBegin;
+        public Action<Dictionary<string, object>> OnAnswer; // for the server and the tutor
 
         public Runtime(Transform stage, Board board, Avatar avatar, Camera camera, Action<string, string> log)
         {
@@ -228,13 +246,147 @@ namespace Vcl
             Camera = camera;
             Log = log;
             Timeline = new Timeline((e, t) => Log("error", $"line {t.Cmd?.Line}: {t.Cmd?.Op}: {e.Message}"));
+            Timeline.OnBegin = t =>
+            {
+                if (t.StartsStep) { Step = t.Step; stepAt = Now; }
+                OnBegin?.Invoke(t);
+            };
         }
 
-        public static double Now => Time.realtimeSinceStartupAsDouble;
+        static double Real => Time.realtimeSinceStartupAsDouble;
+        /// <summary>The timeline's clock: real seconds, stopped while paused.</summary>
+        public double Now => (pausedAt ?? Real) - clockOffset;
+        public bool Paused => pausedAt.HasValue;
+
+        public void Pause()
+        {
+            if (Paused) return;
+            pausedAt = Real;
+            Avatar?.Voice.Pause();
+            if (Avatar != null) Avatar.Paused = true;
+        }
+
+        public void Resume()
+        {
+            if (!Paused) return;
+            clockOffset += Real - pausedAt.Value;
+            pausedAt = null;
+            Avatar?.Voice.Resume();
+            if (Avatar != null) Avatar.Paused = false;
+        }
+
+        public void TogglePause() { if (Paused) Resume(); else Pause(); }
+
+        /// <summary>"question" (waiting for an answer), "paused", "waiting" (step mode), "playing" or "idle".</summary>
+        public string State =>
+            Question != null && !Question.Answered ? "question"
+            : Paused ? "paused"
+            : Timeline.Waiting != null && !Timeline.Waiting.Question ? "waiting"
+            : Timeline.Busy || Question != null ? "playing"
+            : "idle";
+
+        /// <summary>Right answers out of those given (skipped ones don't count).</summary>
+        public (int right, int total) Score
+        {
+            get
+            {
+                int right = 0, total = 0;
+                foreach (var r in Results.Values) if (!r.Skipped) { total++; if (r.Correct) right++; }
+                return (right, total);
+            }
+        }
+
+        /// <summary>Skip the rest of this step (an open question counts as skipped) and play the next.</summary>
+        public bool Forward()
+        {
+            Resume();
+            if (Timeline.Waiting != null && !Timeline.Waiting.Question) return Timeline.Release(Now);
+            if (!Timeline.Busy && Question == null) return false;
+            if (Question != null && !Question.Answered) Question.Skip();
+            else if (Question != null) CloseQuestion();
+            Avatar?.Voice.Stop();
+            Avatar?.Silence();
+            // Between steps (in a wait, say), just start the next one now.
+            var q = Timeline.Queue;
+            int cur = Timeline.ActiveCount > 0 || (q.Count > 0 && q[0].Step <= Step) ? Step : (q.Count > 0 ? q[0].Step : 1) - 1;
+            Timeline.FinishThrough(cur, Now, t => t.Cmd != null && Quiet.Contains(t.Cmd.Op));
+            return true;
+        }
+
+        /// <summary>Back to the start of this step if it has played a while, else the one before.</summary>
+        public bool Back()
+        {
+            if (Steps == 0) return false;
+            double into = Now - stepAt;
+            Seek(into > 3 || Step == 0 ? Math.Max(1, Step) : Step - 1);
+            return true;
+        }
+
+        /// <summary>Jump to the start of step n: rebuild the board as it was then and play on from there.</summary>
+        public void Seek(int n)
+        {
+            if (Steps == 0) return;
+            n = Math.Max(1, Math.Min(Steps, n));
+            var hist = new List<(Cmd cmd, int step, bool instant)>(History);
+            Reset(keep: true);
+            Board?.Apply(Board.Default);
+            foreach (var h in hist) if (h.instant || h.step < n) Exec(h.cmd, true, h.step);
+            foreach (var h in hist) if (!h.instant && h.step >= n) Exec(h.cmd, false, h.step);
+            Step = n;
+            stepAt = Now;
+        }
+
+        /// <summary>Speak outside the timeline (the teacher's reaction to an answer).</summary>
+        public void Speak(string text)
+        {
+            var spoken = Avatar?.Voice.Prepare(text);
+            float dur = spoken.HasValue ? (float)spoken.Value.dur : text.Split(' ').Length * 0.4f;
+            Avatar?.Say(text, dur, spoken?.clip);
+        }
+
+        void Ask(Cmd cmd, Task gate)
+        {
+            CloseQuestion();
+            QuestionCard card = null;
+            card = new QuestionCard(this, cmd, r =>
+            {
+                Results[cmd] = r;
+                if (!r.Skipped)
+                {
+                    string reaction = cmd.Op == "recall" ? (r.Correct ? "Good." : "That one is worth another look.") : r.Correct ? "Correct." : "Not quite.";
+                    var explain = cmd.Str("explain");
+                    Speak(explain != null ? reaction + " " + explain : reaction);
+                }
+                var a = new Dictionary<string, object>
+                {
+                    ["id"] = cmd.Id, ["line"] = (double)cmd.Line, ["kind"] = cmd.Op, ["q"] = cmd.Str("q"),
+                    ["given"] = r.Given, ["correct"] = r.Correct, ["skipped"] = r.Skipped,
+                };
+                foreach (var k in new[] { "options", "ids", "answer", "unit" }) if (cmd.Has(k)) a[k] = cmd[k];
+                OnAnswer?.Invoke(a);
+            }, () =>
+            {
+                if (Question != card) return;
+                CloseQuestion();
+                Avatar?.Voice.Stop();
+                // Open the gate (it may not be holding yet) and play the next step without another press.
+                gate.Gate = false;
+                if (Timeline.Waiting == gate) Timeline.Release(Now, true);
+                var q = Timeline.Queue;
+                if (q.Count > 0 && q[0].Gate && !q[0].Question) q[0].Gate = false;
+            });
+            Question = card;
+        }
+
+        public void CloseQuestion()
+        {
+            Question?.Dispose();
+            Question = null;
+        }
 
         public Entity EntityOf(Transform t) => byObj.TryGetValue(t, out var e) ? e : null;
 
-        public void Exec(Cmd cmd, bool instant = false)
+        public void Exec(Cmd cmd, bool instant = false, int? replayStep = null)
         {
             var op = cmd.Op;
             if (op == "diag") { Log(cmd.Str("level"), $"line {cmd.Line}: {cmd.Str("msg")}"); return; }
@@ -246,51 +398,86 @@ namespace Vcl
                 return;
             }
             if (op == "ask" || op == "status") { Avatar?.Hear(cmd.Str("text"), op == "status" && cmd.Str("text") == "thinking"); return; }
-            Task task;
-            try { task = Handle(cmd); }
+            if (op == "answer") return; // (ours, or another viewer's: the tutor's business)
+            // Remember it with its step, so going back can replay it (unless this is that replay).
+            int step;
+            if (replayStep.HasValue) step = replayStep.Value;
+            else
+            {
+                if (!instant && StartsStep(cmd)) Steps++;
+                step = Steps;
+                History.Add((cmd, step, instant));
+            }
+            Task task, gate = null;
+            if (Questions.Contains(op))
+            {
+                var g = gate = new Task { Gate = true, Question = true, Cmd = cmd, Step = step };
+                task = new Task { Begin = () => Ask(cmd, g) };
+            }
+            else try { task = Handle(cmd); }
             catch (Exception e) { Log("error", $"line {cmd.Line}: {op}: {e.Message}"); return; }
             if (task == null) { Log("warning", $"unity: unsupported op '{op}'"); return; }
             task.Cmd = cmd;
             task.Dur = cmd.Dur;
             task.Par = cmd.Par;
             task.Ease = cmd.Ease;
+            task.Step = step;
+            task.StartsStep = !instant && StartsStep(cmd);
             if (!instant && !Timeline.Busy) saysInBurst = 0; // a new burst (lesson run, tutor reply)
             if (op == "say" && !instant)
             {
                 // Speak it: the say lasts as long as its audio.
-                var spoken = Avatar?.Voice.Prepare(cmd.Str("text"));
-                if (spoken.HasValue)
+                if (!cmd.Spoken.HasValue) cmd.Spoken = Avatar?.Voice.Prepare(cmd.Str("text"));
+                if (cmd.Spoken.HasValue)
                 {
-                    var (clip, dur) = spoken.Value;
+                    var (clip, dur) = cmd.Spoken.Value;
                     task.Dur = dur;
                     task.Begin = () => Avatar.Say(cmd.Str("text"), (float)dur, clip);
                 }
-                task.Gate = Stepping && !cmd.Par && saysInBurst > 0;
+            }
+            if (task.StartsStep && gate == null)
+            {
+                task.Gate = Stepping && saysInBurst > 0;
                 saysInBurst++;
             }
             if (instant)
             {
-                if (op == "say" || op == "point" || op == "wait") return;
+                if (Quiet.Contains(op)) return;
                 Timeline.RunNow(task);
+                return;
             }
-            else Timeline.Add(task, Now);
+            Timeline.Add(task, Now);
+            // A question holds the lesson until it is answered (or skipped).
+            if (gate != null) Timeline.Add(gate, Now);
         }
 
         public bool Next() => Timeline.Release(Now);
-        public bool Waiting => Timeline.Waiting != null;
+        public bool Waiting => Timeline.Waiting != null && !Timeline.Waiting.Question;
 
-        public void Reset()
+        /// <summary>Drop everything. keep: keep the history (going back rebuilds from it).</summary>
+        public void Reset(bool keep = false)
         {
             Timeline.Reset();
             saysInBurst = 0;
+            CloseQuestion();
             Avatar?.Voice.Stop();
+            Resume();
             foreach (var id in new List<string>(Entities.Keys)) Remove(id);
             Avatar?.Point(null, 0);
+            Step = 0;
+            if (!keep)
+            {
+                History.Clear();
+                Steps = 0;
+                Results.Clear();
+            }
         }
 
         public void Update(float dt)
         {
             Timeline.Tick(Now);
+            Question?.Update(dt);
+            if (Paused) dt = 0;
             var camRot = Camera ? Camera.transform.rotation : Quaternion.identity;
             foreach (var e in Entities.Values)
             {

@@ -7,11 +7,13 @@
 //   2. <persistentDataPath>/server.txt         (Quest: tools/set-server.sh)
 //   3. ws://127.0.0.1:8093/ws                   (Quest over USB after `adb reverse tcp:8093 tcp:8093`)
 //
-// Controls (headset): A/X = lesson menu, trigger = next step (or choose, in
-// the menu), B/Y = step mode on/off, thumbstick click = recentre, hold it =
-// switch between upright and reclined (the room follows your view, for
-// lying down). Desktop: M = menu (arrows + Enter), Space/→/Enter = next,
-// S = step mode.
+// Controls (headset): A/X = lesson menu, trigger = press what the ray points
+// at (menu, question, transcript), else next step in step mode; B/Y = pause /
+// resume; thumbstick left/right = back / forward a step; thumbstick click =
+// recentre, hold it = switch between upright and reclined (the room follows
+// your view, for lying down). Desktop: M = menu (arrows + Enter), Space =
+// pause (or next, in step mode), ←/→ = back/forward a step, Enter = next,
+// S = step mode, the mouse presses buttons.
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -37,6 +39,14 @@ namespace Vcl
         bool xr, recentred;
         readonly Dictionary<string, bool> wasPressed = new Dictionary<string, bool>();
         public Menu Menu;
+        public Transcript Transcript;
+        LineRenderer uiLaser;
+        Transform uiDot;
+        Hit uiHover, uiHeld;
+        XRNode? uiHand;
+        bool wasBusy;
+        string finishedNote = "";
+        int stickSide;
         static readonly HttpClient http = new HttpClient { Timeout = System.TimeSpan.FromSeconds(15) };
         /// <summary>Reclined: recentring aligns the room with the view, pitch and roll too.</summary>
         bool reclined;
@@ -209,6 +219,17 @@ namespace Vcl
             Runtime = new Runtime(stage, Board, Avatar, Cam, Log);
             Runtime.LoadTexture = (u, done) => LoadTexture(u, done);
             Runtime.LoadBytes = (u, done) => LoadBytes(u, done);
+            Runtime.OnAnswer = PostAnswer;
+            Transcript = new Transcript(Runtime);
+            uiLaser = new GameObject("ui laser").AddComponent<LineRenderer>();
+            uiLaser.useWorldSpace = true;
+            uiLaser.widthMultiplier = 0.004f;
+            uiLaser.sharedMaterial = Draw.Unlit(Draw.Hex("#8ec5ff"), 3150);
+            uiLaser.sortingOrder = 60;
+            uiLaser.positionCount = 2;
+            uiLaser.enabled = false;
+            uiDot = Draw.MeshObject(null, "ui dot", Draw.Disc(0.008f), Draw.Unlit(Color.white, 3160), 61).transform;
+            uiDot.gameObject.SetActive(false);
             Menu = new Menu
             {
                 Play = PlayLesson,
@@ -221,6 +242,8 @@ namespace Vcl
                 Refresh = FetchLessons,
                 Voiced = () => Avatar.Voice.On,
                 ToggleVoice = () => Avatar.Voice.SetOn(!Avatar.Voice.On),
+                TranscriptShown = () => Transcript.Visible,
+                ToggleTranscript = () => Transcript.Visible = !Transcript.Visible,
             };
             if (!Cam.GetComponent<AudioListener>()) Cam.gameObject.AddComponent<AudioListener>();
             xr = XRSettings.isDeviceActive;
@@ -279,6 +302,7 @@ namespace Vcl
                 for (int n = 0; n < 200 && conn.Inbox.TryDequeue(out var msg); n++) Feed(msg);
             HandleInput();
             Runtime.Update(Time.deltaTime);
+            Transcript.Update();
             Avatar.Update(Time.deltaTime, Cam.transform.position);
             UpdateStatus();
             if (smokeAt > 0 && Time.realtimeSinceStartup > smokeAt)
@@ -368,10 +392,80 @@ namespace Vcl
             return null;
         }
 
+        /// <summary>Answers go to the server, which passes them to the tutor.</summary>
+        void PostAnswer(Dictionary<string, object> a)
+        {
+            Log("info", $"answer ({a["kind"]}): {((bool)a["skipped"] ? "skipped" : (bool)a["correct"] ? "right" : "wrong")}");
+            if (conn == null) return;
+            _ = http.PostAsync(HttpBase + "/answer", new StringContent(Json.Write(a)));
+        }
+
+        /// <summary>What the learner can press outside the menu: the open question, the transcript.</summary>
+        IEnumerable<Hit> UiHits()
+        {
+            if (Runtime.Question != null) foreach (var h in Runtime.Question.Hits) yield return h;
+            if (Transcript.Visible) foreach (var h in Transcript.Hits) yield return h;
+        }
+
+        /// <summary>The nearest hit along a ray (higher Order wins ties), with where it is hit.</summary>
+        Hit UiTest(Ray ray, out Vector3 at)
+        {
+            Hit best = null;
+            float bestD = float.MaxValue;
+            at = Vector3.zero;
+            foreach (var h in UiHits())
+            {
+                var p = h.Test(ray, out var d);
+                if (!p.HasValue) continue;
+                d -= h.Order * 0.01f;
+                if (d < bestD) { best = h; bestD = d; at = h.T.TransformPoint(p.Value); }
+            }
+            return best;
+        }
+
+        void SetUiHover(Hit h)
+        {
+            if (uiHover == h) return;
+            uiHover?.Hover?.Invoke(false);
+            uiHover = h;
+            uiHover?.Hover?.Invoke(true);
+        }
+
+        /// <summary>Aim at the question and transcript; returns true if `press` pressed something.</summary>
+        bool PointUi(Ray? ray, bool press, bool held)
+        {
+            if (!ray.HasValue) { SetUiHover(null); uiLaser.enabled = false; uiDot.gameObject.SetActive(false); return false; }
+            var r = ray.Value;
+            var hit = UiTest(r, out var at);
+            if (uiHeld != null && !held) uiHeld = null;
+            if (uiHeld?.Drag != null)
+            {
+                var p = uiHeld.PlanePoint(r, out _);
+                if (p.HasValue) { uiHeld.Drag(p.Value); at = uiHeld.T.TransformPoint(p.Value); hit = uiHeld; }
+            }
+            SetUiHover(hit);
+            bool show = xr && hit != null;
+            uiLaser.enabled = show;
+            uiDot.gameObject.SetActive(show);
+            if (show)
+            {
+                uiLaser.SetPosition(0, r.origin);
+                uiLaser.SetPosition(1, at);
+                uiDot.position = at;
+                uiDot.rotation = Quaternion.LookRotation(r.direction);
+            }
+            if (!press || hit == null) return false;
+            uiHeld = hit;
+            if (hit.Drag != null) { var p = hit.PlanePoint(r, out _); if (p.HasValue) hit.Drag(p.Value); }
+            hit.Press?.Invoke();
+            return true;
+        }
+
         void HandleInput()
         {
-            bool next = false, toggleStep = false, recentre = false, menu = false, press = false;
-            int page = 0, keyMove = 0;
+            bool next = false, toggleStep = false, recentre = false, menu = false, press = false, pause = false, held = false;
+            int page = 0, keyMove = 0, side = 0;
+            Ray? uiRay = null;
             if (xr)
             {
                 foreach (var hand in new[] { XRNode.LeftHand, XRNode.RightHand })
@@ -380,11 +474,26 @@ namespace Vcl
                     if (trig) pointerHand = hand;
                     next |= trig;
                     press |= trig;
-                    toggleStep |= Pressed(hand, CommonUsages.secondaryButton, hand + "b");
+                    pause |= Pressed(hand, CommonUsages.secondaryButton, hand + "b");
                     menu |= Pressed(hand, CommonUsages.primaryButton, hand + "a");
                     var dev = InputDevices.GetDeviceAtXRNode(hand);
-                    if (dev.isValid && dev.TryGetFeatureValue(CommonUsages.primary2DAxis, out var stick) && Mathf.Abs(stick.y) > 0.7f) page = stick.y > 0 ? -1 : 1;
+                    if (dev.isValid && dev.TryGetFeatureValue(CommonUsages.primary2DAxis, out var stick))
+                    {
+                        if (Mathf.Abs(stick.y) > 0.7f) page = stick.y > 0 ? -1 : 1;
+                        if (Mathf.Abs(stick.x) > 0.7f && Mathf.Abs(stick.y) < 0.5f) side = stick.x > 0 ? 1 : -1;
+                    }
                 }
+                // The UI pointer: the hand that last pulled the trigger, or whichever points at something.
+                var mainRay = HandRay(pointerHand);
+                var otherHand = pointerHand == XRNode.RightHand ? XRNode.LeftHand : XRNode.RightHand;
+                var otherRay = HandRay(otherHand);
+                if (mainRay.HasValue && UiTest(mainRay.Value, out _) != null) uiHand = pointerHand;
+                else if (otherRay.HasValue && UiTest(otherRay.Value, out _) != null) uiHand = otherHand;
+                else uiHand = pointerHand;
+                uiRay = HandRay(uiHand.Value);
+                held = Held(uiHand.Value, CommonUsages.triggerButton);
+                // Only the trigger of the hand aiming at the UI presses it (the other one's is "next").
+                if (press && uiHand != pointerHand) press = false;
                 // Thumbstick click: recentre; hold it (0.8 s): switch upright ↔ reclined.
                 bool stickHeld = Held(XRNode.LeftHand, CommonUsages.primary2DAxisClick) || Held(XRNode.RightHand, CommonUsages.primary2DAxisClick);
                 if (stickHeld && stickDown < 0) { stickDown = Time.time; stickLong = false; }
@@ -403,18 +512,41 @@ namespace Vcl
                     press |= enter;
                     if (keyMove != 0 || enter) Menu.Key(keyMove, enter);
                 }
-                else next |= kb.spaceKey.wasPressedThisFrame || kb.rightArrowKey.wasPressedThisFrame || enter;
+                else
+                {
+                    next |= enter;
+                    if (kb.spaceKey.wasPressedThisFrame) { if (Runtime.Waiting) next = true; else pause = true; }
+                    if (kb.rightArrowKey.wasPressedThisFrame) side = 1;
+                    if (kb.leftArrowKey.wasPressedThisFrame) side = -1;
+                }
                 toggleStep |= kb.sKey.wasPressedThisFrame;
+            }
+            var mouse = UnityEngine.InputSystem.Mouse.current;
+            if (!xr && mouse != null && Cam)
+            {
+                uiRay = Cam.ScreenPointToRay(mouse.position.ReadValue());
+                press |= mouse.leftButton.wasPressedThisFrame;
+                held = mouse.leftButton.isPressed;
             }
 #endif
             if (menu) Menu.Toggle(Cam.transform);
             if (Menu.Open)
             {
+                PointUi(null, false, false);
                 if (xr) Menu.Point(HandRay(pointerHand), press);
                 if (page != 0 && page != stickPage) Menu.Page(page);
                 stickPage = page;
             }
-            else if (next) Runtime.Next();
+            else
+            {
+                // The trigger presses what it points at; otherwise it is "next step" (step mode).
+                bool pressedUi = PointUi(uiRay, press, held);
+                if (next && !pressedUi && xr) Runtime.Next();
+                else if (next && !xr && !press) Runtime.Next();
+                if (pause) Runtime.TogglePause();
+                if (side != 0 && side != stickSide) { if (side > 0) Runtime.Forward(); else Runtime.Back(); }
+            }
+            stickSide = side;
             if (toggleStep) ToggleStep();
             if (recentre) Recentre();
         }
@@ -423,7 +555,23 @@ namespace Vcl
         {
             if (!status) return;
             string link = conn == null ? "" : conn.State == "live" ? "<color=#66bb6a>● live</color>" : $"<color=#ffa726>● {conn.State}</color> {conn.Url}" + (conn.LastError != null ? $"\n<size=70%>{conn.LastError}</size>" : "");
-            string play = Runtime.Waiting ? "<color=#ffe066>paused · trigger for next</color>" : Runtime.Timeline.Busy ? "playing" : "";
+            // Playback, and once it ends, "finished" (with the score, if there were questions).
+            var state = Runtime.State;
+            bool busy = state != "idle";
+            if (!busy && wasBusy)
+            {
+                var (right, total) = Runtime.Score;
+                finishedNote = "✓ Finished" + (total > 0 ? $" · {right} of {total} right" : "");
+                Avatar.Hear(finishedNote, false, 8);
+            }
+            if (busy) finishedNote = "";
+            wasBusy = busy;
+            string play = state == "question" ? "<color=#7fe3ff>your turn: answer the question</color>"
+                : state == "paused" ? "<color=#ffa726>paused · B/Y to resume</color>"
+                : state == "waiting" ? "<color=#ffe066>step mode · trigger for next</color>"
+                : state == "playing" ? "playing"
+                : finishedNote.Length > 0 ? $"<color=#66bb6a>{finishedNote}</color>" : "";
+            Transcript.Status = play.Length > 0 ? play : "<color=#8796ab>ready</color>";
             string step = (Runtime.Stepping ? "  step mode" : "") + (reclined ? "  reclined" : "");
             status.text = $"{link}  {play}{step}" + (logLines.Count > 0 ? "\n<size=80%>" + string.Join("\n", logLines) + "</size>" : "");
             // Top-left corner of the board, just above it.
@@ -440,6 +588,11 @@ namespace Vcl
         {
             if (!Cam || xr) return;
             var pts = new List<Vector3>(Board.WorldCorners());
+            if (Transcript != null)
+            {
+                Transcript.Update();
+                pts.AddRange(Transcript.WorldCorners());
+            }
             var a = Avatar.Root.position;
             var sub = Avatar.SubRoot.position;
             pts.Add(new Vector3(a.x - 0.32f, sub.y - 0.12f, a.z));
