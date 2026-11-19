@@ -71,7 +71,9 @@ Two ways to set that up:
 | Lesson menu | A or X | M (arrows, Enter, Esc) |
 | Press a button (menu, question, transcript) | point, trigger | mouse |
 | Pause / resume | B or Y | Space |
-| Back / forward a step | thumbstick left / right | ← / → |
+| Back / forward a step | thumbstick left / right (not in move mode) | ← / → |
+| Walk (move mode) | left stick | |
+| Turn / rise and sink (move mode) | right stick left-right / up-down | |
 | Next step (step mode) | trigger | Space, Enter |
 | Step mode on/off | menu | S |
 | Recentre | thumbstick click | |
@@ -94,7 +96,23 @@ and move). The card shows what was right, the teacher says why, and Continue
 goes on. Answers go to the server for the tutor.
 
 The menu also has a **Voice** switch (robot voice or subtitles only) and a
-**Transcript** switch, both remembered.
+**Transcript** switch, both remembered, and:
+
+* **Speed** (1×, 1.25×, 1.5×, 1.75×, 2×, 0.75×): animations run faster or
+  slower, and the voice is synthesized at that rate (not pitched up).
+  Changing it mid-lesson restarts the current step at the new speed.
+* **Move: on/off**: in move mode the left stick walks where you look, the
+  right stick turns smoothly (left/right) and rises or sinks (up/down) to see
+  3D things from above or below. Stepping through the lesson is then on the
+  transcript's buttons. Thumbstick click still recentres the classroom on you.
+* **Teacher**: the robot, or any VRM avatar (`.vrm`, VRM 1.0 or 0.x) in the
+  server's assets folder (`viewer/assets/`, or `vcl serve --assets DIR`),
+  loaded at runtime, so you can swap avatars without rebuilding. It stands
+  beside the board, looks at you or at what it points at, points with its
+  right arm, moves its mouth with the voice and blinks. The choice is
+  remembered. A VRChat avatar can be used by exporting it as VRM (UniVRM's
+  exporter in Unity, or from VRoid). `.vrm` files in `viewer/assets/` are
+  git-ignored, since avatars are usually licensed to you.
 
 The **menu** lists the server's built-in lessons and its `--lessons` library,
 one folder per subfolder; point with either controller and pull the trigger.

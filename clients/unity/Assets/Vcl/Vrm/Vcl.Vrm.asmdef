@@ -1,0 +1,14 @@
+{
+    "name": "Vcl.Vrm",
+    "references": [
+        "VRM10",
+        "UniGLTF",
+        "UniGLTF.Utils",
+        "UniHumanoid",
+        "VrmLib"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true
+}

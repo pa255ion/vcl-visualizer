@@ -35,9 +35,29 @@ namespace Vcl.EditorTools
             ConfigurePlayer();
             ConfigureXR();
             ConfigurePlugins();
+            IncludeShaders();
             CreateScene();
             AssetDatabase.SaveAssets();
             Debug.Log("[vcl] setup done");
+        }
+
+        /// <summary>Shaders only found by name at runtime (VRM avatars' materials) would be
+        /// stripped from the build: list them under Always Included Shaders.</summary>
+        static void IncludeShaders()
+        {
+            var gs = new SerializedObject(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>("ProjectSettings/GraphicsSettings.asset"));
+            var list = gs.FindProperty("m_AlwaysIncludedShaders");
+            foreach (var name in new[] { "VRM10/MToon10", "UniGLTF/UniUnlit", "Standard" })
+            {
+                var sh = Shader.Find(name);
+                if (!sh) { Debug.LogWarning($"[vcl] shader {name} not found"); continue; }
+                bool has = false;
+                for (int i = 0; i < list.arraySize; i++) if (list.GetArrayElementAtIndex(i).objectReferenceValue == sh) has = true;
+                if (has) continue;
+                list.InsertArrayElementAtIndex(list.arraySize);
+                list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = sh;
+            }
+            gs.ApplyModifiedProperties();
         }
 
         /// <summary>TextMesh Pro's fonts and shaders. AssetDatabase.ImportPackage finishes
@@ -269,6 +289,14 @@ namespace Vcl.EditorTools
             app.AssetRoot = Env("VCL_ASSETS") ?? Path.GetFullPath("../../viewer"); // lesson files (svg, models) from disk
             var spoken = app.Avatar.Voice.Prepare("Testing the voice.");
             Debug.Log($"[vcl] voice: {(spoken.HasValue ? $"{spoken.Value.dur:F2} s of speech" : "none: " + (app.Avatar.Voice.Error ?? "off"))}");
+            // VCL_VRM=file.vrm: that avatar as the teacher.
+            if (Env("VCL_VRM") != null)
+            {
+                var load = VrmTeacher.Load(File.ReadAllBytes(Env("VCL_VRM")), Env("VCL_VRM"), app.Classroom, app.Avatar.FloorSpot);
+                if (!load.IsCompleted) throw new Exception("VRM load didn't finish synchronously");
+                app.Avatar.SetModel(load.Result);
+                Debug.Log($"[vcl] teacher: {Path.GetFileName(Env("VCL_VRM"))}");
+            }
             if (Env("VCL_TEXDBG") != null) Debug.Log("[vcl] tex metrics: " + MathTex.DebugMetrics("x()W⊤∗+ℒ"));
             void Render(string path)
             {
@@ -281,6 +309,8 @@ namespace Vcl.EditorTools
                 app.FitCamera();
                 app.Runtime.Update(0);
                 app.Avatar.Update(0.01f, cam.transform.position);
+                // A VRM teacher eases into its pose: let it settle.
+                if (app.Avatar.Model != null) for (int i = 0; i < 40; i++) app.Avatar.Update(0.05f, cam.transform.position);
                 foreach (var t in UnityEngine.Object.FindObjectsOfType<TMP_Text>()) t.ForceMeshUpdate(true, true);
                 var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
                 cam.targetTexture = rt;

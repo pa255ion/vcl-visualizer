@@ -7,3 +7,6 @@ result
 node_modules/
 viewer/tts.wasm
 zig-pkg/
+
+# Teacher avatars (VRM) you add to the assets folder: often licensed per person, so not committed.
+viewer/assets/*.vrm

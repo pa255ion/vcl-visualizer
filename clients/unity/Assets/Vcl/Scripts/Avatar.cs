@@ -27,8 +27,25 @@ namespace Vcl
         float pointUntil, speakUntil, subUntil, nextBlink = 2, t;
         Color subColor = Draw.Hex("#f5f7fa");
 
+        /// <summary>A VRM avatar standing in for the robot (null: the robot).</summary>
+        public VrmTeacher Model { get; private set; }
+        readonly List<Renderer> robotParts = new List<Renderer>();
+        readonly Transform parent;
+
+        /// <summary>Replace the robot with a VRM avatar (null: the robot again).</summary>
+        public void SetModel(VrmTeacher m)
+        {
+            if (Model != null && Model != m) Model.Dispose();
+            Model = m;
+            foreach (var r in robotParts) if (r) r.enabled = m == null;
+        }
+
+        /// <summary>Where a VRM teacher stands: under the robot, on the floor.</summary>
+        public Vector3 FloorSpot => new Vector3(Root.localPosition.x - 0.3f, 0, Root.localPosition.z - 0.15f);
+
         public Avatar(Transform parent, Vector3 position, Vector3 subtitleAt, float scale = 0.72f)
         {
+            this.parent = parent;
             Root = Draw.Child(parent, "teacher").transform;
             Root.localPosition = position;
             Root.localScale = Vector3.one * scale;
@@ -70,6 +87,8 @@ namespace Vcl
                 Prim(Root, PrimitiveType.Sphere, Std(Skin), handRest[0], Vector3.one * 0.1f),
                 Prim(Root, PrimitiveType.Sphere, Std(Skin), handRest[1], Vector3.one * 0.1f),
             };
+
+            robotParts.AddRange(Root.GetComponentsInChildren<Renderer>(true));
 
             // Pointer beam + target dot (in the classroom's space).
             beam = Draw.Child(parent, "beam").AddComponent<LineRenderer>();
@@ -178,12 +197,12 @@ namespace Vcl
             var left = hands[0];
             left.localPosition = handRest[0] + new Vector3(0, Mathf.Sin(t * 2.1f + 1) * 0.01f, 0);
 
-            bool showBeam = pointTarget.HasValue && Vector3.Distance(hand.localPosition, goal) < 0.08f;
+            bool showBeam = pointTarget.HasValue && (Model != null ? Model.Pointing : Vector3.Distance(hand.localPosition, goal) < 0.08f);
             beam.enabled = showBeam;
             dot.gameObject.SetActive(showBeam);
             if (showBeam)
             {
-                beam.SetPosition(0, hand.position);
+                beam.SetPosition(0, Model != null ? Model.Fingertip : hand.position);
                 beam.SetPosition(1, pointTarget.Value);
                 dot.position = pointTarget.Value;
                 dot.localScale = Vector3.one * 0.036f * (1 + 0.25f * Mathf.Sin(t * 8));
@@ -193,6 +212,7 @@ namespace Vcl
             float talk = Voice.Speaking ? Voice.Level()
                 : speaking ? 0.5f + 0.5f * Mathf.Abs(Mathf.Sin(t * 13) * Mathf.Sin(t * 4.7f)) : 0;
             mouth.localScale = new Vector3(0.016f * (1 + talk * 3), 0.034f, 0.01f);
+            Model?.Update(t, dt, look, pointTarget, Voice.Speaking ? Mathf.Clamp01(talk * 1.6f) : speaking ? talk * 0.6f : 0);
             bulb.localScale = Vector3.one * 0.044f * (1 + (speaking ? 0.3f * Mathf.Abs(Mathf.Sin(t * 6)) : thinking ? 0.45f * (0.5f + 0.5f * Mathf.Sin(t * 5)) : 0));
 
             if (t > nextBlink) nextBlink = t + 2.5f + Random.value * 3;

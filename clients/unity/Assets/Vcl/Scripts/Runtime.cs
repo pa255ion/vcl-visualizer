@@ -231,8 +231,10 @@ namespace Vcl
         public int Steps { get; private set; }  // steps numbered so far (1 is the first)
         public int Step { get; private set; }   // the step playing, or last played
         double stepAt;
-        double clockOffset;
+        // The clock: clockAt lesson seconds at real time realAt, running at Speed.
+        double clockAt, realAt = Real;
         double? pausedAt;
+        public float Speed { get; private set; } = 1;
         public QuestionCard Question { get; private set; }
         public readonly Dictionary<Cmd, QuestionResult> Results = new Dictionary<Cmd, QuestionResult>();
         public Action<Task> OnBegin;
@@ -255,7 +257,22 @@ namespace Vcl
 
         static double Real => Time.realtimeSinceStartupAsDouble;
         /// <summary>The timeline's clock: real seconds, stopped while paused.</summary>
-        public double Now => (pausedAt ?? Real) - clockOffset;
+        public double Now => clockAt + ((pausedAt ?? Real) - realAt) * Speed;
+
+        /// <summary>Play faster or slower (0.5–2): animations follow the clock, and speech is
+        /// synthesized at that rate. What is queued was voiced at the old rate, so the
+        /// current step restarts at the new one.</summary>
+        public void SetSpeed(float s)
+        {
+            s = Mathf.Clamp(s, 0.5f, 2);
+            if (Mathf.Approximately(s, Speed)) return;
+            double real = pausedAt ?? Real;
+            clockAt = Now;
+            realAt = real;
+            Speed = s;
+            if (Avatar != null) Avatar.Voice.Rate = s;
+            if (Timeline.Busy && Steps > 0) Seek(Math.Max(1, Step));
+        }
         public bool Paused => pausedAt.HasValue;
 
         public void Pause()
@@ -269,7 +286,7 @@ namespace Vcl
         public void Resume()
         {
             if (!Paused) return;
-            clockOffset += Real - pausedAt.Value;
+            realAt += Real - pausedAt.Value;
             pausedAt = null;
             Avatar?.Voice.Resume();
             if (Avatar != null) Avatar.Paused = false;
@@ -340,7 +357,7 @@ namespace Vcl
         public void Speak(string text)
         {
             var spoken = Avatar?.Voice.Prepare(text);
-            float dur = spoken.HasValue ? (float)spoken.Value.dur : text.Split(' ').Length * 0.4f;
+            float dur = spoken.HasValue ? (float)spoken.Value.dur : text.Split(' ').Length * 0.4f / Speed;
             Avatar?.Say(text, dur, spoken?.clip);
         }
 
@@ -427,11 +444,16 @@ namespace Vcl
             if (op == "say" && !instant)
             {
                 // Speak it: the say lasts as long as its audio.
-                if (!cmd.Spoken.HasValue) cmd.Spoken = Avatar?.Voice.Prepare(cmd.Str("text"));
+                if (!cmd.Spoken.HasValue || cmd.SpokenRate != Speed)
+                {
+                    cmd.Spoken = Avatar?.Voice.Prepare(cmd.Str("text"));
+                    cmd.SpokenRate = Speed;
+                }
                 if (cmd.Spoken.HasValue)
                 {
                     var (clip, dur) = cmd.Spoken.Value;
-                    task.Dur = dur;
+                    // Lesson time runs Speed times faster than the audio's real seconds.
+                    task.Dur = (dur - 0.25) * Speed + 0.25;
                     task.Begin = () => Avatar.Say(cmd.Str("text"), (float)dur, clip);
                 }
             }
@@ -477,7 +499,7 @@ namespace Vcl
         {
             Timeline.Tick(Now);
             Question?.Update(dt);
-            if (Paused) dt = 0;
+            dt = Paused ? 0 : dt * Speed;
             var camRot = Camera ? Camera.transform.rotation : Quaternion.identity;
             foreach (var e in Entities.Values)
             {
@@ -698,7 +720,7 @@ namespace Vcl
             switch (c.Op)
             {
                 case "wait": return new Task();
-                case "say": return new Task { Begin = () => Avatar?.Say(c.Str("text"), (float)c.Dur) };
+                case "say": return new Task { Begin = () => Avatar?.Say(c.Str("text"), (float)c.Dur / Speed) };
                 case "point": return new Task { Begin = () => Avatar?.Point(c.Has("at") ? PointWorld(c["at"]) : (Vector3?)null, (float)c.Dur) };
                 case "title": return Create(c.With("id", "__title").With("op", "title"));
                 case "board": return BoardTask(c);

@@ -11,7 +11,9 @@
 // at (menu, question, transcript), else next step in step mode; B/Y = pause /
 // resume; thumbstick left/right = back / forward a step; thumbstick click =
 // recentre, hold it = switch between upright and reclined (the room follows
-// your view, for lying down). Desktop: M = menu (arrows + Enter), Space =
+// your view, for lying down). Move mode (menu): left stick walks, right
+// stick turns (left/right) and rises or sinks (up/down); stepping is then on
+// the transcript's buttons. Desktop: M = menu (arrows + Enter), Space =
 // pause (or next, in step mode), ←/→ = back/forward a step, Enter = next,
 // S = step mode, the mouse presses buttons.
 using System.Collections.Generic;
@@ -47,6 +49,14 @@ namespace Vcl
         bool wasBusy;
         string finishedNote = "";
         int stickSide;
+        /// <summary>The tracked space: the camera moves in it, and it moves (move mode) in the world.</summary>
+        public Transform Rig;
+        bool moving;
+        static readonly float[] Speeds = { 1, 1.25f, 1.5f, 1.75f, 2, 0.75f };
+        /// <summary>VRM avatars on the server (assets/…vrm): the teacher choices after the robot.</summary>
+        readonly List<string> teachers = new List<string>();
+        string teacher = ""; // "" = the robot
+        bool loadingTeacher;
         static readonly HttpClient http = new HttpClient { Timeout = System.TimeSpan.FromSeconds(15) };
         /// <summary>Reclined: recentring aligns the room with the view, pitch and roll too.</summary>
         bool reclined;
@@ -66,6 +76,10 @@ namespace Vcl
             Debug.Log($"[vcl] server {url}");
             conn = new Connection(url);
             Runtime.Stepping = PlayerPrefs.GetInt("vcl.step", 0) == 1;
+            Runtime.SetSpeed(PlayerPrefs.GetFloat("vcl.speed", 1));
+            moving = PlayerPrefs.GetInt("vcl.move", 0) == 1;
+            teacher = PlayerPrefs.GetString("vcl.teacher", "");
+            if (teacher.Length > 0) LoadTeacher(teacher);
             reclined = PlayerPrefs.GetInt("vcl.recline", 0) == 1;
             FetchLessons();
         }
@@ -75,8 +89,38 @@ namespace Vcl
 
         // ── lessons over HTTP (await resumes on Unity's main thread) ──
 
+        /// <summary>Make `path` (a .vrm under the server's assets, or "" for the robot) the teacher.</summary>
+        public void LoadTeacher(string path)
+        {
+            teacher = path;
+            if (path.Length == 0) { Avatar.SetModel(null); Menu?.Rebuild(); return; }
+            loadingTeacher = true;
+            Menu?.Rebuild();
+            LoadBytes(path, async bytes =>
+            {
+                try
+                {
+                    if (bytes == null) throw new System.Exception("couldn't fetch it");
+                    var m = await VrmTeacher.Load(bytes, path, Classroom, Avatar.FloorSpot);
+                    if (teacher == path) Avatar.SetModel(m); else m.Dispose();
+                }
+                catch (System.Exception e) { Log("warning", $"teacher {path}: {e.Message}"); if (teacher == path) Avatar.SetModel(null); }
+                loadingTeacher = false;
+                Menu?.Rebuild();
+            });
+        }
+
         async void FetchLessons()
         {
+            // VRM avatars among the server's assets can be the teacher.
+            try
+            {
+                var assets = (Dictionary<string, object>)Json.Parse(await http.GetStringAsync(HttpBase + "/assets/index.json"));
+                teachers.Clear();
+                foreach (var f in (List<object>)assets["files"])
+                    if (f is string s && s.EndsWith(".vrm", System.StringComparison.OrdinalIgnoreCase)) teachers.Add("assets/" + s);
+            }
+            catch (System.Exception e) { Debug.Log($"[vcl] no asset list: {e.Message}"); }
             var list = new List<LessonInfo>();
             try
             {
@@ -164,6 +208,12 @@ namespace Vcl
                 var cg = new GameObject("Main Camera") { tag = "MainCamera" };
                 Cam = cg.AddComponent<Camera>();
             }
+            // The camera lives in a rig: tracking moves it within, move mode moves the rig.
+            if (!Rig)
+            {
+                Rig = new GameObject("rig").transform;
+                Cam.transform.SetParent(Rig, true);
+            }
             Cam.clearFlags = CameraClearFlags.SolidColor;
             Cam.backgroundColor = Draw.Hex("#0b0f16");
             Cam.nearClipPlane = 0.03f;
@@ -242,6 +292,25 @@ namespace Vcl
                 Refresh = FetchLessons,
                 Voiced = () => Avatar.Voice.On,
                 ToggleVoice = () => Avatar.Voice.SetOn(!Avatar.Voice.On),
+                SpeedLabel = () => $"{Runtime.Speed:0.##}×",
+                CycleSpeed = () =>
+                {
+                    int i = System.Array.FindIndex(Speeds, s => Mathf.Approximately(s, Runtime.Speed));
+                    Runtime.SetSpeed(Speeds[(i + 1) % Speeds.Length]);
+                    PlayerPrefs.SetFloat("vcl.speed", Runtime.Speed);
+                },
+                Moving = () => moving,
+                ToggleMove = () => { moving = !moving; PlayerPrefs.SetInt("vcl.move", moving ? 1 : 0); },
+                TeacherLabel = () => loadingTeacher ? "loading…" : teacher.Length == 0 ? "Robot" : System.IO.Path.GetFileNameWithoutExtension(teacher),
+                CycleTeacher = () =>
+                {
+                    var all = new List<string> { "" };
+                    all.AddRange(teachers);
+                    if (teacher.Length > 0 && !all.Contains(teacher)) all.Add(teacher);
+                    var next = all[(all.IndexOf(teacher) + 1) % all.Count];
+                    PlayerPrefs.SetString("vcl.teacher", next);
+                    LoadTeacher(next);
+                },
                 TranscriptShown = () => Transcript.Visible,
                 ToggleTranscript = () => Transcript.Visible = !Transcript.Visible,
             };
@@ -482,7 +551,7 @@ namespace Vcl
                     if (dev.isValid && dev.TryGetFeatureValue(CommonUsages.primary2DAxis, out var stick))
                     {
                         if (Mathf.Abs(stick.y) > 0.7f) page = stick.y > 0 ? -1 : 1;
-                        if (Mathf.Abs(stick.x) > 0.7f && Mathf.Abs(stick.y) < 0.5f) side = stick.x > 0 ? 1 : -1;
+                        if (!moving && Mathf.Abs(stick.x) > 0.7f && Mathf.Abs(stick.y) < 0.5f) side = stick.x > 0 ? 1 : -1;
                     }
                 }
                 // The UI pointer: the hand that last pulled the trigger, or whichever points at something.
@@ -531,6 +600,7 @@ namespace Vcl
                 held = mouse.leftButton.isPressed;
             }
 #endif
+            if (xr && moving && !Menu.Open) Locomote(Time.deltaTime);
             if (menu) Menu.Toggle(Cam.transform);
             if (Menu.Open)
             {
@@ -551,6 +621,34 @@ namespace Vcl
             stickSide = side;
             if (toggleStep) ToggleStep();
             if (recentre) Recentre();
+        }
+
+        /// <summary>Move mode: left stick walks where you look, right stick turns (x) and
+        /// rises or sinks (y).</summary>
+        void Locomote(float dt)
+        {
+            Vector2 Stick(XRNode hand)
+            {
+                var d = InputDevices.GetDeviceAtXRNode(hand);
+                if (!d.isValid || !d.TryGetFeatureValue(CommonUsages.primary2DAxis, out var v)) return Vector2.zero;
+                return new Vector2(Mathf.Abs(v.x) > 0.15f ? v.x : 0, Mathf.Abs(v.y) > 0.15f ? v.y : 0);
+            }
+            var walk = Stick(XRNode.LeftHand);
+            var turn = Stick(XRNode.RightHand);
+            var fwd = Cam.transform.forward;
+            fwd.y = 0;
+            if (fwd.sqrMagnitude < 0.05f) { fwd = Cam.transform.up; fwd.y = 0; } // lying down: "ahead" is up the view
+            if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.forward;
+            fwd.Normalize();
+            var right = Vector3.Cross(Vector3.up, fwd);
+            Rig.position += (fwd * walk.y + right * walk.x) * (1.6f * dt);
+            if (turn.x != 0) Rig.RotateAround(Cam.transform.position, Vector3.up, turn.x * 75 * dt);
+            if (turn.y != 0)
+            {
+                var p = Rig.position;
+                p.y = Mathf.Clamp(p.y + turn.y * 1.0f * dt, -1.5f, 3f);
+                Rig.position = p;
+            }
         }
 
         void UpdateStatus()

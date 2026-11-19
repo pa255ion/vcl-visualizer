@@ -166,6 +166,7 @@ namespace Vcl
 
         /// <summary>A say's synthesized speech, kept so replaying it (going back) needn't redo it.</summary>
         public (UnityEngine.AudioClip clip, double dur)? Spoken;
+        public float SpokenRate; // the speed it was synthesized at
 
         public string Op => Str("op");
         public string Id => Str("id");
