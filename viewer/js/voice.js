@@ -106,7 +106,7 @@ export class Voice {
 
   /** Synthesize a say command's audio and set its duration to match (runs on arrival). */
   prepare(cmd) {
-    if (this.mode !== 'robot' || !this.tts || !cmd.text || cmd.audio) return; // (replayed: already done)
+    if (this.mode !== 'robot' || !this.tts || !cmd.text || cmd.audio?.speed === this.rate) return; // (replayed: already done)
     const x = this.tts;
     const bytes = new TextEncoder().encode(cmd.text);
     const p = x.tts_alloc(bytes.length);
@@ -115,8 +115,9 @@ export class Voice {
     x.tts_free(p, bytes.length);
     if (rc !== 0) { this.log('warning', `voice: synthesis failed (${rc})`); return; }
     const samples = new Float32Array(x.memory.buffer, x.tts_samples(), x.tts_len()).slice();
-    cmd.audio = { samples, rate: x.tts_sample_rate() };
-    cmd.dur = x.tts_seconds() + 0.25; // a breath between sentences
+    // In lesson time, which runs `rate` times faster than real time.
+    cmd.audio = { samples, rate: x.tts_sample_rate(), speed: this.rate };
+    cmd.dur = x.tts_seconds() * this.rate + 0.25; // a breath between sentences
   }
 
   /** Start speaking a say command (called when it starts on the timeline). */
@@ -136,7 +137,7 @@ export class Voice {
       const u = new SpeechSynthesisUtterance(cmd.text);
       const v = this.browserVoice();
       if (v) { u.voice = v; u.lang = v.lang; }
-      u.rate = 1.05;
+      u.rate = 1.05 * this.rate;
       u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled') this.log('warning', `browser voice: ${e.error}`); };
       speechSynthesis.speak(u);
     }

@@ -42,6 +42,8 @@ pub const Param = struct {
     raw: bool = false,
     /// For `.id`: `name.pin` is accepted for diagrams with parts (`part_ops`).
     part: bool = false,
+    /// For `.id` with `part`: any pin will do (`t.R2`, `c.L3`, `R1.a`), not only parts.
+    any_pin: bool = false,
     /// For `.boolean`: a quoted list of numbers is accepted too (`xticks="1,2,4"`).
     nums: bool = false,
 };
@@ -115,7 +117,7 @@ pub const ops = [_]Op{
     .{ .name = "del", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0.3 },
     // questions for the learner: playback waits for the answer
     .{ .name = "quiz", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "options", .ty = .str, .many = true, .min = 2, .max = 8 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .any_pin = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
     .{ .name = "estimate", .kind = .flow, .pos = &.{ P("q", .str), P("range", .range) }, .keys = &.{ P("answer", .num), P("tol", .num), P("step", .num), P("unit", .str), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
     .{ .name = "recall", .kind = .flow, .pos = &.{ P("q", .str), P("answer", .str) }, .keys = &.{P("explain", .str)}, .dur = 0, .replay = false, .question = true },
     // 2D
@@ -845,13 +847,14 @@ const LineParser = struct {
                     const ok = for (part_ops) |po| {
                         if (std.mem.eql(u8, po, e.op)) break true;
                     } else false;
-                    if (!ok) return p.fail("{s}: '{s}' is a {s}; only parts of nn, grid, bits, bars and hist can be targeted (name.part)", .{ op, n, e.op });
+                    if (!ok and !param.any_pin) return p.fail("{s}: '{s}' is a {s}; only parts of nn, grid, bits, bars and hist can be targeted (name.part)", .{ op, n, e.op });
                     if (!e.hasPort(pin)) {
                         var cands: std.ArrayList([]const u8) = .empty;
                         var it = std.mem.splitScalar(u8, e.ports, ',');
                         while (it.next()) |pn| if (pn.len > 0) try cands.append(p.arena, pn);
                         const hint = if (suggest(pin, cands.items)) |sg| try std.fmt.allocPrint(p.arena, " (did you mean '{s}'?)", .{sg}) else "";
-                        return p.fail("{s}: '{s}' has no part '{s}'{s}", .{ op, n, pin, hint });
+                        if (param.any_pin and e.ports.len == 0) return p.fail("{s}: '{s}' (a {s}) has no pins; pick it whole", .{ op, n, e.op });
+                        return p.fail("{s}: '{s}' has no {s} '{s}'{s}", .{ op, n, if (param.any_pin) "pin" else "part", pin, hint });
                     }
                     return .{ .id = text };
                 };
@@ -3001,6 +3004,25 @@ test "questions: quiz, pick, estimate, recall; answers are checked" {
         \\{"op":"diag","level":"error","line":12,"msg":"quiz: needs answer=N, the number of the right choice (1 is the first; answer=1,3 if several are right)"}
         \\{"op":"diag","level":"error","line":13,"msg":"estimate: answer 2 is outside the slider's range 0..1"}
         \\{"op":"diag","level":"error","line":14,"msg":"hl: unknown name 'q1'"}
+        \\
+    );
+}
+
+test "pick takes any pin: table rows, code lines, scatter points, part pins" {
+    try expectOut(
+        \\t: table 0,0 "a|b" "1|2" "3|4"
+        \\R1: part 4,0 resistor
+        \\pick "Which row?" t.R1 t.R2 R1.a answer=2
+        \\pick "Q" t.R9 t.R1 answer=1
+        \\pick "Q" R1.q t.R1 answer=1
+        \\pick "Q" t.R1 nope.a answer=1
+    ,
+        \\{"op":"table","id":"t","line":1,"par":false,"dur":0.6,"at":[0,0,0],"rows":["a|b","1|2","3|4"]}
+        \\{"op":"part","id":"R1","line":2,"par":false,"dur":0.5,"at":[4,0,0],"kind":"resistor"}
+        \\{"op":"pick","line":3,"par":false,"dur":0,"q":"Which row?","ids":["t.R1","t.R2","R1.a"],"answer":[2]}
+        \\{"op":"diag","level":"error","line":4,"msg":"pick: 't' has no pin 'R9'"}
+        \\{"op":"diag","level":"error","line":5,"msg":"pick: 'R1' has no pin 'q'"}
+        \\{"op":"diag","level":"error","line":6,"msg":"pick: unknown name 'nope'"}
         \\
     );
 }

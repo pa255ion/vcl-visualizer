@@ -148,7 +148,10 @@ export class Runtime {
     this.steps = 0;   // steps numbered so far (1 is the first sentence or question)
     this.step = 0;    // the step playing, or last played
     this.stepAt = 0;  // when it began (runtime clock)
-    this.clockOffset = 0;
+    // The clock: `clockAt` lesson seconds at real time `realAt`, running at `speed`.
+    this.clockAt = 0;
+    this.realAt = performance.now() / 1000;
+    this.speed = 1;
     this.pausedAt = null;
     this.question = null; // the open QuestionCard
     this.results = new Map(); // question cmd → { correct, skipped, … }
@@ -170,7 +173,23 @@ export class Runtime {
   }
 
   /** The timeline's clock: real seconds, stopped while paused. */
-  now() { return (this.pausedAt ?? performance.now() / 1000) - this.clockOffset; }
+  now() { return this.clockAt + ((this.pausedAt ?? performance.now() / 1000) - this.realAt) * this.speed; }
+
+  /**
+   * Play faster or slower (0.5–2): animations follow the clock, and speech is
+   * synthesized at that rate. What is queued was voiced at the old rate, so
+   * the current step restarts at the new one.
+   */
+  setSpeed(s) {
+    s = Math.min(2, Math.max(0.5, s));
+    if (s === this.speed) return;
+    const real = this.pausedAt ?? performance.now() / 1000;
+    this.clockAt = this.now();
+    this.realAt = real;
+    this.speed = s;
+    if (this.voice) this.voice.rate = s;
+    if (this.timeline.busy && this.steps) this.seek(Math.max(1, this.step));
+  }
 
   get paused() { return this.pausedAt !== null; }
 
@@ -183,7 +202,7 @@ export class Runtime {
 
   resume() {
     if (!this.paused) return;
-    this.clockOffset += performance.now() / 1000 - this.pausedAt;
+    this.realAt += performance.now() / 1000 - this.pausedAt;
     this.pausedAt = null;
     this.voice?.resume();
     if (this.avatar) this.avatar.paused = false;
@@ -252,7 +271,7 @@ export class Runtime {
   speak(text) {
     const c = { op: 'say', text };
     this.voice?.prepare(c);
-    this.avatar?.say(text, c.dur ?? text.split(/\s+/).length * 0.4);
+    this.avatar?.say(text, (c.dur ?? text.split(/\s+/).length * 0.4) / this.speed);
     this.voice?.play(c);
   }
 
@@ -363,7 +382,7 @@ export class Runtime {
     const now = this.now();
     this.timeline.tick(now);
     this.question?.update(dt);
-    if (this.paused) dt = 0;
+    dt = this.paused ? 0 : dt * this.speed;
     const camQ = this.camera.getWorldQuaternion(new THREE.Quaternion());
     const q = new THREE.Quaternion();
     for (const e of this.entities.values()) {
@@ -532,7 +551,7 @@ for (const op of QUESTIONS) {
   };
 }
 H.say = function (c) {
-  return { begin: () => { this.avatar?.say(c.text, c.dur); this.voice?.play(c); } };
+  return { begin: () => { this.avatar?.say(c.text, c.dur / this.speed); this.voice?.play(c); } };
 };
 H.point = function (c) { return { begin: () => this.avatar?.point(c.at ? this.pointWorld(c.at) : null, c.dur) }; };
 H.title = function (c) { return this.create({ ...c, id: '__title', op: 'title' }); };

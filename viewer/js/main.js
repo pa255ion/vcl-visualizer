@@ -291,6 +291,13 @@ editor.addEventListener('keydown', (e) => {
 // comes from this machine's vcl serve.
 if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && location.port) $('#headset').hidden = false;
 $('#toggle-editor').onclick = () => { document.body.classList.toggle('editing'); fitCamera(); };
+// Playback speed, remembered.
+try { const s = parseFloat(localStorage.getItem('vcl.speed')); if (s >= 0.5 && s <= 2) runtime.setSpeed(s); } catch {}
+$('#speed').value = String(runtime.speed);
+$('#speed').onchange = (e) => {
+  runtime.setSpeed(parseFloat(e.target.value));
+  try { localStorage.setItem('vcl.speed', String(runtime.speed)); } catch {}
+};
 $('#voice').value = voice.mode;
 $('#voice').onchange = (e) => voice.setMode(e.target.value);
 const browserOption = $('#voice option[value="browser"]');
@@ -340,7 +347,8 @@ if (params.has('lesson')) {
     await run(editor.value, modeSel.value, true);
     // Skip to the end. In mixed mode `say` beats are queued as their speech is
     // ready, after this point, so keep flushing rather than once.
-    if (params.has('skip')) setInterval(() => runtime.timeline.busy && runtime.timeline.flush(), 150);
+    // Questions are skipped, so screenshots show the board, not a card.
+    if (params.has('skip')) setInterval(() => { runtime.question?.skip(); if (runtime.timeline.busy) runtime.timeline.flush(); }, 150);
   })().catch((e) => log('error', e.message));
 }
 
