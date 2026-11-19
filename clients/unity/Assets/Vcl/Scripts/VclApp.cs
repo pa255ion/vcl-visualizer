@@ -456,7 +456,9 @@ namespace Vcl
             }
             if (!press || hit == null) return false;
             uiHeld = hit;
-            if (hit.Drag != null) { var p = hit.PlanePoint(r, out _); if (p.HasValue) hit.Drag(p.Value); }
+            var at0 = hit.PlanePoint(r, out _);
+            if (at0.HasValue) hit.PressAt?.Invoke(at0.Value);
+            if (hit.Drag != null && at0.HasValue) hit.Drag(at0.Value);
             hit.Press?.Invoke();
             return true;
         }

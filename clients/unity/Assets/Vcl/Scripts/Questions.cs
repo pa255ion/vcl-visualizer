@@ -24,6 +24,7 @@ namespace Vcl
         public Transform T;
         public Rect R;
         public Action Press;
+        public Action<Vector3> PressAt; // where it was pressed, in T's local space
         public Action<bool> Hover;
         public Action<Vector3> Drag; // a point in T's local space
         public int Order;            // higher wins when hits overlap
@@ -268,7 +269,39 @@ namespace Vcl
             bgObj.transform.localPosition = new Vector3(0, -height / 2, 0);
             var edge = new Stroke(root, Edge, 0.05f) { Order = Order + 1 };
             edge.Set(new List<List<Vector3>> { Draw.RoundedRect(W, height, 0.3f).Select(p => p + new Vector3(0, -height / 2, -0.005f)).ToList() });
+            // A drag handle in the corner; the whole card (not its buttons) moves it.
+            var grip = Draw.Text(root, "✥ drag to move", 0.22f, Muted, "right", false);
+            grip.transform.localPosition = new Vector3(W / 2 - Pad, -Pad - 0.11f, -0.02f);
+            grip.renderer.sortingOrder = Order + 3;
+            var bgT = bgObj.transform;
+            Vector3? grab = null;
+            Vector3 OnStage(Vector3 local) => rt.Stage.InverseTransformPoint(bgT.TransformPoint(local));
+            Hits.Add(new Hit
+            {
+                T = bgT, R = new Rect(-W / 2, -height / 2, W, height), Order = -1,
+                PressAt = local => grab = OnStage(local) - root.localPosition,
+                Drag = local =>
+                {
+                    if (!grab.HasValue) return;
+                    var p = OnStage(local) - grab.Value;
+                    float bw = rt.Board != null ? rt.Board.Width : 16, bh = rt.Board != null ? rt.Board.Height : 9;
+                    p.x = Mathf.Clamp(p.x, -bw / 2 - 6, bw / 2 + 6);
+                    p.y = Mathf.Clamp(p.y, -bh / 2 - 3, bh / 2 + 6);
+                    root.localPosition = new Vector3(p.x, p.y, root.localPosition.z);
+                    var home = Home();
+                    PlayerPrefs.SetString(Slot, FormattableString.Invariant($"{p.x - home.x},{p.y - home.y}"));
+                },
+            });
             Place();
+        }
+
+        string Slot => Cmd.Op == "pick" ? "vcl.questionOffset.pick" : "vcl.questionOffset.card";
+
+        /// <summary>The card's usual top-centre, before any dragging.</summary>
+        Vector2 Home()
+        {
+            float bh = rt.Board != null ? rt.Board.Height : 9;
+            return new Vector2(0, Cmd.Op == "pick" ? bh / 2 - 0.1f : Mathf.Min(bh / 2 - 0.3f, height - bh / 2 + 0.9f));
         }
 
         static List<int> Given(QuestionResult r) => r.Given is List<object> l ? l.Select(o => (int)(double)o).ToList() : new List<int>();
@@ -276,10 +309,14 @@ namespace Vcl
         /// <summary>Over the lower board, clear of the subtitles (pick: a short card over the title).</summary>
         void Place()
         {
-            float bh = rt.Board != null ? rt.Board.Height : 9;
-            float top = Cmd.Op == "pick" ? bh / 2 - 0.1f : Mathf.Min(bh / 2 - 0.3f, height - bh / 2 + 0.9f);
+            // Where the learner last dragged this kind of card, from its usual place (remembered).
+            var off = Vector2.zero;
+            var saved = PlayerPrefs.GetString(Slot, "").Split(',');
+            if (saved.Length == 2 && float.TryParse(saved[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ox)
+                && float.TryParse(saved[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var oy)) off = new Vector2(ox, oy);
+            var home = Home();
             // VCL's +z (toward the learner) is Unity's -z.
-            root.localPosition = new Vector3(0, top, -Z);
+            root.localPosition = new Vector3(home.x + off.x, home.y + off.y, -Z);
             root.localRotation = Quaternion.Euler(Cmd.Op == "pick" ? -3.5f : 3.5f, 0, 0);
         }
 

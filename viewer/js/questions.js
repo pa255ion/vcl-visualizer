@@ -18,6 +18,11 @@ const PAD = 0.45;
 const Z = 1.5;        // in front of the board
 const TEXT = 0.36;    // body line height
 
+/** Where the learner has dragged cards to, from their usual place (board
+ *  units; `pick` cards separately, as they start elsewhere). Remembered. */
+const moved = (() => { try { return JSON.parse(localStorage.getItem('vcl.questionOffset')) ?? {}; } catch { return {}; } })();
+const saveMoved = () => { try { localStorage.setItem('vcl.questionOffset', JSON.stringify(moved)); } catch {} };
+
 /** Wrap text to lines of at most `n` characters. */
 export function wrap(text, n) {
   const out = [];
@@ -182,6 +187,29 @@ export class QuestionCard {
     edge.position.copy(bg.position);
     this.root.add(bg, edge, body);
     this.height = h;
+    // A drag handle in the corner; the whole card (not its buttons) moves it.
+    const grip = new TextPlane('✥ drag to move', { size: 0.22, color: C.muted });
+    grip.mesh.position.set(W / 2 - PAD - grip.width / 2, -PAD - 0.11, 0.02);
+    this.root.add(grip.mesh);
+    let grab = null;
+    this.hits.push({
+      mesh: bg,
+      cursor: 'move',
+      press: (world) => { if (world) grab = this.rt.stage.worldToLocal(world.clone()).sub(this.root.position); },
+      drag: (world) => {
+        if (!grab) return;
+        const p = this.rt.stage.worldToLocal(world.clone()).sub(grab);
+        const [bw, bh] = this.rt.board?.size ?? [16, 9];
+        p.x = Math.max(-bw / 2 - 6, Math.min(bw / 2 + 6, p.x));
+        p.y = Math.max(-bh / 2 - 3, Math.min(bh / 2 + 6, p.y));
+        this.root.position.x = p.x;
+        this.root.position.y = p.y;
+        const home = this.home();
+        moved[this.slot] = { x: p.x - home.x, y: p.y - home.y };
+        saveMoved();
+      },
+      hover: () => {},
+    });
     this.place();
     this.setOpacity(this.fade);
   }
@@ -189,10 +217,17 @@ export class QuestionCard {
   /** Where the card goes: over the lower board, clear of the subtitles (pick:
    *  a short card over the title, leaving the things to pick in view). */
   place() {
-    const bh = this.rt.board?.size[1] ?? 9;
-    const top = this.cmd.op === 'pick' ? bh / 2 - 0.1 : Math.min(bh / 2 - 0.3, this.height - bh / 2 + 0.9);
-    this.root.position.set(0, top, Z);
+    const home = this.home(), off = moved[this.slot] ?? { x: 0, y: 0 };
+    this.root.position.set(home.x + off.x, home.y + off.y, Z);
     this.root.rotation.x = this.cmd.op === 'pick' ? 0.06 : -0.06;
+  }
+
+  get slot() { return this.cmd.op === 'pick' ? 'pick' : 'card'; }
+
+  /** The card's usual top-centre, before any dragging. */
+  home() {
+    const bh = this.rt.board?.size[1] ?? 9;
+    return { x: 0, y: this.cmd.op === 'pick' ? bh / 2 - 0.1 : Math.min(bh / 2 - 0.3, this.height - bh / 2 + 0.9) };
   }
 
   button(parent, x, y, w, h, label, onPress, { bg = C.button, align = 'center', size = TEXT } = {}) {

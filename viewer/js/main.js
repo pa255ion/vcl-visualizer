@@ -491,12 +491,10 @@ const pointer = {
     const hit = this.hover.get(id);
     if (!hit || !runtime.hits.includes(hit)) return false;
     this.held.set(id, hit);
-    if (hit.drag) {
-      const at = this.ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(
-        new THREE.Vector3(0, 0, 1).transformDirection(hit.mesh.matrixWorld), hit.mesh.getWorldPosition(new THREE.Vector3())), new THREE.Vector3());
-      if (at) hit.drag(at);
-    }
-    hit.press();
+    const at = this.ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(
+      new THREE.Vector3(0, 0, 1).transformDirection(hit.mesh.matrixWorld), hit.mesh.getWorldPosition(new THREE.Vector3())), new THREE.Vector3());
+    hit.press(at);
+    if (at) hit.drag?.(at);
     return true;
   },
   release(id) { this.held.delete(id); },
@@ -527,7 +525,8 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (renderer.xr.isPresenting) return;
   const hit = aimMouse(e);
-  renderer.domElement.style.cursor = hit || pointer.held.has('mouse') ? 'pointer' : '';
+  const h = pointer.held.get('mouse') ?? hit;
+  renderer.domElement.style.cursor = h ? h.cursor ?? 'pointer' : '';
 });
 addEventListener('pointerup', () => { pointer.release('mouse'); controls.enabled = true; });
 
