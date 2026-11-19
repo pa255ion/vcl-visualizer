@@ -20,9 +20,10 @@ rm -rf "$dest"
 mkdir -p "$dest/js" "$dest/lessons" "$dest/licenses" "$dest/assets"
 cp viewer/index.html viewer/style.css viewer/vcl.wasm viewer/tts.wasm "$dest/"
 cp viewer/js/*.js "$dest/js/"
-cp viewer/lessons/* "$dest/lessons/"
-cp viewer/licenses/* "$dest/licenses/"
-cp -r viewer/assets/. "$dest/assets/"
+# Only what git tracks: git-ignored avatars (.vrm) and local lessons stay home.
+for d in lessons licenses assets; do
+  git ls-files -z "viewer/$d" | xargs -0 -I{} cp {} "$dest/$d/"
+done
 
 v="?v=$version"
 sed -i -e 's|<html lang="en">|<html lang="en" data-static>|' \

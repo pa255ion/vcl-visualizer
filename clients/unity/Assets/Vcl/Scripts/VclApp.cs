@@ -448,17 +448,20 @@ namespace Vcl
             return d.isValid && d.TryGetFeatureValue(usage, out var v) && v;
         }
 
-        /// <summary>The controller's pointing ray (OpenXR aim pose; else the grip pose tilted forward).</summary>
-        static Ray? HandRay(XRNode hand)
+        /// <summary>The controller's pointing ray in world space (OpenXR aim pose; else the grip pose
+        /// tilted forward). Poses come in tracking space, which the rig carries when moving.</summary>
+        Ray? HandRay(XRNode hand)
         {
             var d = InputDevices.GetDeviceAtXRNode(hand);
             if (!d.isValid) return null;
+            Ray? local = null;
             if (d.TryGetFeatureValue(new InputFeatureUsage<Vector3>("PointerPosition"), out var p) &&
                 d.TryGetFeatureValue(new InputFeatureUsage<Quaternion>("PointerRotation"), out var q) && q != default)
-                return new Ray(p, q * Vector3.forward);
-            if (d.TryGetFeatureValue(CommonUsages.devicePosition, out p) && d.TryGetFeatureValue(CommonUsages.deviceRotation, out q))
-                return new Ray(p, q * Quaternion.Euler(35, 0, 0) * Vector3.forward);
-            return null;
+                local = new Ray(p, q * Vector3.forward);
+            else if (d.TryGetFeatureValue(CommonUsages.devicePosition, out p) && d.TryGetFeatureValue(CommonUsages.deviceRotation, out q))
+                local = new Ray(p, q * Quaternion.Euler(35, 0, 0) * Vector3.forward);
+            if (!local.HasValue || !Rig) return local;
+            return new Ray(Rig.TransformPoint(local.Value.origin), Rig.TransformDirection(local.Value.direction));
         }
 
         /// <summary>Answers go to the server, which passes them to the tutor.</summary>
