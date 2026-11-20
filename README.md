@@ -53,14 +53,16 @@ zig build run -- serve      # http://127.0.0.1:8080
 
 Open http://127.0.0.1:8080, click **Editor**, pick a lesson (or **Open…** a `.vcl`/`.md` file from your computer, or drop one on the editor), press **Run** (Ctrl+Enter). "wrap lines" soft-wraps long lines.
 
-The top bar's **Scene** menu picks the surroundings: Night (the plain dark room),
-Aero (bright sky, glossy platform, hills, clouds and soap bubbles), Tech (glowing
-grid, distant towers) or Demo (synthwave sun, scrolling grid, vector shapes).
-Each has its own generative music and background sound, and things being drawn
+The gear button opens the settings: the **Scene** (Night, the plain dark room;
+Aero, bright sky, glossy platform, hills, clouds and soap bubbles; Tech, glowing
+grid and distant towers; Demo, synthwave sun, scrolling grid, vector shapes),
+**Music** and **Effects** volume sliders, the teacher's voice and step mode. Each
+scene has its own generative music and background sound, and things being drawn
 make soft sounds in the music's key; the music dips while the teacher speaks.
-**Sound** switches between music + sounds, sounds only, and silent. Everything
-is synthesized (Web Audio, shaders): no audio or image files. `?scene=aero` in
-the URL picks a scene too.
+Everything is synthesized (Web Audio, shaders): no audio or image files.
+`?scene=aero` in the URL picks a scene too. Playback (pause, step back and
+forward, progress, speed) is in the dock at the bottom; messages fade after a
+few seconds, and the editor shows them all.
 
 Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
 go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then

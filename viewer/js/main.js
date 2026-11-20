@@ -144,6 +144,11 @@ function log(level, msg) {
   li.className = level;
   li.textContent = msg;
   logEl.prepend(li);
+  // A toast: it fades after a while (errors stay longer); the editor shows them all.
+  setTimeout(() => {
+    li.classList.add('old');
+    setTimeout(() => li.classList.add('gone'), 700);
+  }, level === 'error' ? 15000 : level === 'warning' ? 10000 : 6000);
   while (logEl.children.length > 200) logEl.lastChild.remove();
   if (level === 'error' || level === 'warning') console.warn(msg);
   else console.log(msg);
@@ -455,29 +460,63 @@ function soundFor(t) {
   else return;
   lastSound = now;
 }
-const sceneSel = $('#scene');
-for (const [k, label] of Object.entries(SCENES)) sceneSel.add(new Option(label, k));
+// Scene tiles in the settings panel.
+const scenesEl = $('#scenes');
+for (const [k, label] of Object.entries(SCENES)) {
+  const b = document.createElement('button');
+  b.className = `swatch ${k}`;
+  b.dataset.scene = k;
+  b.title = label;
+  b.innerHTML = `<i></i><span>${label}</span>`;
+  b.onclick = () => {
+    setScene(k);
+    try { localStorage.setItem('vcl.scene', k); } catch {}
+  };
+  scenesEl.append(b);
+}
 let sceneName = params.get('scene');
 try { sceneName ??= localStorage.getItem('vcl.scene'); } catch {}
 sceneName = SCENES[sceneName] ? sceneName : 'night';
 function setScene(name) {
   scenery.set(name);
   ambience.setScene(name);
-  sceneSel.value = name;
+  for (const b of scenesEl.children) b.setAttribute('aria-pressed', String(b.dataset.scene === name));
 }
 setScene(sceneName);
-sceneSel.onchange = () => {
-  setScene(sceneSel.value);
-  try { localStorage.setItem('vcl.scene', sceneSel.value); } catch {}
-};
-const soundSel = $('#sound');
-try { const m = localStorage.getItem('vcl.sound'); if (m) soundSel.value = m; } catch {}
-ambience.setMode(soundSel.value);
-soundSel.onchange = () => {
-  ambience.setMode(soundSel.value);
-  ambience.start();
-  try { localStorage.setItem('vcl.sound', soundSel.value); } catch {}
-};
+
+// Volumes (0–100, remembered). An older "sound" setting maps onto them once.
+function volume(id, key, def, apply) {
+  const el = $(id), out = el.parentElement.querySelector('output');
+  let v = def;
+  try {
+    const old = localStorage.getItem('vcl.sound'), saved = localStorage.getItem(key);
+    if (saved !== null) v = +saved;
+    else if (old === 'off' || (old === 'fx' && key === 'vcl.musicVol')) v = 0;
+  } catch {}
+  const show = () => {
+    el.style.setProperty('--fill', `${el.value}%`);
+    out.textContent = +el.value ? `${el.value}` : 'off';
+    apply(el.value / 100);
+  };
+  el.value = String(v);
+  show();
+  el.oninput = () => { show(); ambience.start(); };
+  el.onchange = () => { try { localStorage.setItem(key, el.value); } catch {} };
+}
+volume('#music-vol', 'vcl.musicVol', 60, (v) => ambience.setMusic(v));
+volume('#fx-vol', 'vcl.fxVol', 70, (v) => ambience.setEffects(v));
+
+// The settings panel: the gear opens it; a click elsewhere or Escape closes it.
+const settingsEl = $('#settings'), settingsBtn = $('#settings-btn');
+function showSettings(on) {
+  settingsEl.hidden = !on;
+  settingsBtn.setAttribute('aria-expanded', String(on));
+}
+settingsBtn.onclick = (e) => { e.stopPropagation(); showSettings(settingsEl.hidden); };
+addEventListener('pointerdown', (e) => {
+  if (!settingsEl.hidden && !settingsEl.contains(e.target) && !settingsBtn.contains(e.target)) showSettings(false);
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape') showSettings(false); });
 
 function setting(id, key, def, onChange = () => {}) {
   const el = $(id);
@@ -524,6 +563,13 @@ function showPlayState() {
   const finished = !busy && wasBusy;
   wasBusy = busy;
   $('#transport').hidden = !runtime.steps;
+  const steps = runtime.steps, at = Math.min(runtime.step, steps);
+  $('#progress').hidden = $('#progress-label').hidden = !steps;
+  if (steps) {
+    $('#progress-fill').style.width = `${(state === 'done' ? 1 : at / steps) * 100}%`;
+    $('#progress-label').textContent = `${state === 'done' ? steps : Math.max(at, 1)} / ${steps}`;
+  }
+  $('#dock').hidden = !steps && !state && $('#next').hidden;
   $('#pause').textContent = rs === 'paused' ? '▶' : '❚❚';
   $('#pause').title = rs === 'paused' ? 'Resume (Space)' : 'Pause (Space)';
   if (finished) {

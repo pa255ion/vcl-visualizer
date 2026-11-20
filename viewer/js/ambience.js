@@ -5,7 +5,7 @@
 // The music dips while the teacher speaks.
 //
 //   const amb = new Ambience();
-//   amb.setScene('aero'); amb.setMode('all' | 'fx' | 'off');
+//   amb.setScene('aero'); amb.setMusic(0..1); amb.setEffects(0..1);
 //   amb.draw(seconds)  amb.pop()  amb.fade()  amb.question()  amb.answer(correct)  amb.duck(seconds)
 
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -16,14 +16,14 @@ const THEMES = {
     bpm: 58, music: 0.5,
     chords: [[50, 57, 62, 65, 69], [46, 53, 58, 62, 69], [41, 48, 57, 60, 64], [48, 55, 60, 64, 67]], // Dm9 B♭maj7 Fmaj7 C
     pad: { types: ['triangle', 'sine'], cutoff: 900, gain: 0.05, attack: 2.5, release: 3.5 },
-    bell: { density: 0.08, octave: 12, gain: 0.05, ratio: 3.5 },
+    bell: { density: 0.08, octave: 12, gain: 0.022, ratio: 3.5 },
     bed: { kind: 'wind', gain: 0.025 },
   },
   aero: {
     bpm: 84, music: 0.55,
     chords: [[48, 55, 64, 67, 71, 74], [45, 52, 60, 64, 67, 71], [41, 48, 57, 60, 64, 67], [43, 50, 59, 62, 65, 69]], // Cmaj9 Am9 Fmaj9 G13
     pad: { types: ['sine', 'triangle'], cutoff: 2600, gain: 0.04, attack: 1.6, release: 2.5 },
-    bell: { density: 0.3, octave: 24, gain: 0.045, ratio: 2.0 },
+    bell: { density: 0.22, octave: 24, gain: 0.018, ratio: 2.0 },
     bed: { kind: 'water', gain: 0.02 },
   },
   tech: {
@@ -48,7 +48,8 @@ export class Ambience {
   constructor() {
     this.ctx = null;
     this.scene = 'night';
-    this.mode = 'all';
+    this.music = 0.6; // slider positions, 0–1 (0.6 and 0.7 are the designed levels)
+    this.effects = 0.7;
     this.chord = 0;
     this.step = 0;
     this.padVoices = [];
@@ -84,13 +85,13 @@ export class Ambience {
     this.delay.connect(fb).connect(this.delay);
     this.delay.connect(dwet).connect(this.master);
     // Buses: music (ducked under speech), bed, effects.
-    this.music = ctx.createGain(); this.music.connect(this.master); this.music.connect(this.reverb);
+    this.musicBus = ctx.createGain(); this.musicBus.connect(this.master); this.musicBus.connect(this.reverb);
     this.bedBus = ctx.createGain(); this.bedBus.connect(this.master);
     this.fx = ctx.createGain(); this.fx.connect(this.master); this.fx.connect(this.reverb);
     this.duckGain = ctx.createGain(); // between the music voices and the music bus
-    this.duckGain.connect(this.music);
+    this.duckGain.connect(this.musicBus);
     this.noise = this.noiseBuffer();
-    this.applyMode();
+    this.applyLevels();
     this.applyScene(true);
     this.nextTime = ctx.currentTime + 0.1;
     this.timer = setInterval(() => this.schedule(), 50);
@@ -120,17 +121,26 @@ export class Ambience {
     if (this.ctx) this.applyScene(false);
   }
 
-  /** 'all': music, bed and effects; 'fx': effects only; 'off': silent. */
-  setMode(mode) {
-    this.mode = mode;
-    if (this.ctx) this.applyMode();
+  /** Music (and the background bed) volume, 0–1 as on the slider. */
+  setMusic(v) {
+    this.music = v;
+    if (this.ctx) this.applyLevels();
   }
 
-  applyMode() {
-    const t = this.ctx.currentTime, th = this.theme;
-    this.music.gain.setTargetAtTime(this.mode === 'all' ? th.music : 0, t, 0.4);
-    this.bedBus.gain.setTargetAtTime(this.mode === 'all' ? 1 : 0, t, 0.4);
-    this.fx.gain.setTargetAtTime(this.mode === 'off' ? 0 : 1, t, 0.1);
+  /** Effects volume, 0–1. */
+  setEffects(v) {
+    this.effects = v;
+    if (this.ctx) this.applyLevels();
+  }
+
+  get musicOn() { return this.music > 0.005; }
+
+  applyLevels() {
+    // Square law (sliders feel even), 1 at the designed level.
+    const t = this.ctx.currentTime, m = (this.music / 0.6) ** 2, f = (this.effects / 0.7) ** 2;
+    this.musicBus.gain.setTargetAtTime(this.theme.music * m, t, 0.1);
+    this.bedBus.gain.setTargetAtTime(m, t, 0.1);
+    this.fx.gain.setTargetAtTime(f, t, 0.05);
   }
 
   applyScene(first) {
@@ -142,7 +152,7 @@ export class Ambience {
     this.step = 0;
     this.nextTime = t + (first ? 0.1 : 0.6);
     this.delay.delayTime.setValueAtTime((60 / th.bpm) * 0.75, t);
-    this.applyMode();
+    this.applyLevels();
     if (th.bed) this.bedNode = this.bed(th.bed);
   }
 
@@ -163,9 +173,9 @@ export class Ambience {
     const th = this.theme, bar = 16, perChord = bar * 2;
     if (step % perChord === 0) {
       this.chord = Math.floor(step / perChord) % th.chords.length;
-      if (this.mode === 'all') this.padChord(t, th.chords[this.chord], perChord * s16);
+      if (this.musicOn) this.padChord(t, th.chords[this.chord], perChord * s16);
     }
-    if (this.mode !== 'all') return;
+    if (!this.musicOn) return;
     const ch = th.chords[this.chord];
     const pos = step % perChord;
     if (th.arp && pos % th.arp.every === 0 && Math.random() < th.arp.density) {
@@ -350,7 +360,7 @@ export class Ambience {
 
   // ── sounds for what happens on the board ──
 
-  ready() { return this.ctx?.state === 'running' && this.mode !== 'off'; }
+  ready() { return this.ctx?.state === 'running' && this.effects > 0.005; }
 
   /** A note from the current chord, `up` octaves above its middle. */
   chordNote(up = 1, pick) {
@@ -381,15 +391,15 @@ export class Ambience {
   /** Something fading in: a quiet bell. */
   fade() {
     if (!this.ready()) return;
-    this.bell(this.ctx.currentTime, this.chordNote(2), 0.025, 3.5, this.fx);
+    this.bell(this.ctx.currentTime, this.chordNote(2), 0.016, 3.5, this.fx);
   }
 
   /** A question appears. */
   question() {
     if (!this.ready()) return;
     const t = this.ctx.currentTime, ch = this.theme.chords[this.chord];
-    this.bell(t, ch[0] + 24, 0.04, 2, this.fx);
-    this.bell(t + 0.16, ch[2] + 24, 0.04, 2, this.fx);
+    this.bell(t, ch[0] + 24, 0.03, 2, this.fx);
+    this.bell(t + 0.16, ch[2] + 24, 0.03, 2, this.fx);
   }
 
   answer(correct) {

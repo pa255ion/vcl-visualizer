@@ -4,7 +4,7 @@
 // drawing sounds taken from the chord playing at that moment, and the music
 // dips while the teacher speaks.
 //
-// The main thread only posts requests (scene, mode, sounds); the audio thread
+// The main thread only posts requests (scene, volumes, sounds); the audio thread
 // owns every voice, the sequencer and the effects.
 using System;
 using System.Collections.Generic;
@@ -39,7 +39,7 @@ namespace Vcl
                 Bpm = 58, Music = 0.5f,
                 Chords = new[] { new[] { 50, 57, 62, 65, 69 }, new[] { 46, 53, 58, 62, 69 }, new[] { 41, 48, 57, 60, 64 }, new[] { 48, 55, 60, 64, 67 } },
                 PadWaves = new[] { Wave.Triangle, Wave.Sine }, PadCutoff = 900, PadGain = 0.05f, PadAttack = 2.5f, PadRelease = 3.5f,
-                Bell = true, BellDensity = 0.08f, BellOctave = 12, BellGain = 0.05f, BellRatio = 3.5f,
+                Bell = true, BellDensity = 0.08f, BellOctave = 12, BellGain = 0.022f, BellRatio = 3.5f,
                 Bed = "wind", BedGain = 0.025f,
             },
             ["aero"] = new Theme
@@ -47,7 +47,7 @@ namespace Vcl
                 Bpm = 84, Music = 0.55f,
                 Chords = new[] { new[] { 48, 55, 64, 67, 71, 74 }, new[] { 45, 52, 60, 64, 67, 71 }, new[] { 41, 48, 57, 60, 64, 67 }, new[] { 43, 50, 59, 62, 65, 69 } },
                 PadWaves = new[] { Wave.Sine, Wave.Triangle }, PadCutoff = 2600, PadGain = 0.04f, PadAttack = 1.6f, PadRelease = 2.5f,
-                Bell = true, BellDensity = 0.3f, BellOctave = 24, BellGain = 0.045f, BellRatio = 2f,
+                Bell = true, BellDensity = 0.22f, BellOctave = 24, BellGain = 0.018f, BellRatio = 2f,
                 Bed = "water", BedGain = 0.02f,
             },
             ["tech"] = new Theme
@@ -68,22 +68,23 @@ namespace Vcl
             },
         };
 
-        public static readonly string[] Modes = { "all", "fx", "off" };
-        public static string ModeLabel(string m) => m == "all" ? "music" : m == "fx" ? "effects" : "off";
 
         // ── main thread API ──
 
         public string Scene { get; private set; } = "night";
-        public string Mode { get; private set; } = "all";
+        /// <summary>Slider positions, 0–1; 0.6 and 0.7 are the designed levels.</summary>
+        public float MusicVolume { get; private set; } = 0.6f;
+        public float EffectsVolume { get; private set; } = 0.7f;
         readonly object gate = new object();
         List<Action> pending = new List<Action>(), swap = new List<Action>();
         void Post(Action a) { lock (gate) pending.Add(a); }
 
         public void SetScene(string s) { if (!Themes.ContainsKey(s)) s = "night"; Scene = s; Post(() => ApplyScene(s)); }
-        public void SetMode(string m) { Mode = m; Post(() => mode = m); }
+        public void SetMusicVolume(float v) { MusicVolume = Mathf.Clamp01(v); Post(() => musicVol = MusicVolume); }
+        public void SetEffectsVolume(float v) { EffectsVolume = Mathf.Clamp01(v); Post(() => fxVol = EffectsVolume); }
         public void DrawSound(float secs) => Post(() => DoDraw(secs));
         public void Pop() => Post(DoPop);
-        public void Fade() => Post(() => BellVoice(ChordNote(2), 0.025f, 3.5f, Bus.Fx));
+        public void Fade() => Post(() => { if (fxVol > 0.005f) BellVoice(ChordNote(2), 0.016f, 3.5f, Bus.Fx); });
         public void Question() => Post(DoQuestion);
         public void Answer(bool correct) => Post(() => DoAnswer(correct));
         public void Duck(float secs) => Post(() => duckUntil = time + Math.Max(0.3, secs));
@@ -107,7 +108,8 @@ namespace Vcl
 
         // ── audio thread state ──
 
-        string mode = "all";
+        float musicVol = 0.6f, fxVol = 0.7f;
+        bool MusicOn => musicVol > 0.005f;
         Theme th = Themes["night"];
         double time, nextStep, duckUntil = -1;
         int step, chord;
@@ -146,7 +148,9 @@ namespace Vcl
             for (int f = 0; f < frames; f++)
             {
                 while (nextStep <= time) { Tick(step, nextStep, sixteenth); nextStep += sixteenth; step++; }
-                float musicT = mode == "all" ? th.Music : 0, bedT = mode == "all" ? 1 : 0, fxT = mode == "off" ? 0 : 1;
+                // Square law (the sliders feel even), 1 at the designed level.
+                float m = (musicVol / 0.6f) * (musicVol / 0.6f), fxT = (fxVol / 0.7f) * (fxVol / 0.7f);
+                float musicT = th.Music * m, bedT = m;
                 musicLvl += (musicT - musicLvl) * kLvl; bedLvl += (bedT - bedLvl) * kLvl; fxLvl += (fxT - fxLvl) * kLvl * 4;
                 float duckT = time < duckUntil ? 0.45f : 1;
                 duck += (duckT - duck) * (duckT < duck ? kDuckDown : kDuckUp);
@@ -163,7 +167,7 @@ namespace Vcl
                 music *= musicLvl * duck; fx *= fxLvl; bed *= bedLvl;
                 // Echo (arpeggios and bells), then the hall.
                 float echoed = delayBuf[(delayPos - dlen + delayBuf.Length) % delayBuf.Length];
-                delayBuf[delayPos] = (mode == "off" ? 0 : dsend * (mode == "all" ? 1 : 0.5f)) + echoed * 0.32f;
+                delayBuf[delayPos] = dsend * Mathf.Max(musicLvl / Mathf.Max(th.Music, 0.01f), fxLvl) * 0.8f + echoed * 0.32f;
                 delayPos = (delayPos + 1) % delayBuf.Length;
                 float dry = music + fx + bed + echoed * 0.35f;
                 reverb.Process((music + fx) * 0.5f, out float wl, out float wr);
@@ -184,9 +188,9 @@ namespace Vcl
             if (st % perChord == 0)
             {
                 chord = st / perChord % th.Chords.Length;
-                if (mode == "all") PadChord(t, th.Chords[chord], perChord * s16);
+                if (MusicOn) PadChord(t, th.Chords[chord], perChord * s16);
             }
-            if (mode != "all") return;
+            if (!MusicOn) return;
             var ch = th.Chords[chord];
             int pos = st % perChord;
             if (th.Arp && R() < th.ArpDensity)
@@ -221,7 +225,7 @@ namespace Vcl
 
         void DoDraw(float secs)
         {
-            if (mode == "off") return;
+            if (fxVol <= 0.005f) return;
             float d = Mathf.Clamp(secs, 0.25f, 2.5f);
             float lo = Scene == "demo" ? 2000 : Scene == "tech" ? 1500 : 900;
             voices.Add(new NoiseBurst(this, d, lo, lo * 2.2f, 3, Scene == "aero" ? 0.022f : 0.018f));
@@ -232,21 +236,21 @@ namespace Vcl
 
         void DoPop()
         {
-            if (mode == "off") return;
+            if (fxVol <= 0.005f) return;
             voices.Add(new Tone(this, ChordNote(1), Wave.Sine, 0.06f, 0.05f, 4000, 0.003f, 0.25f, Bus.Fx) { Glide = -12 });
         }
 
         void DoQuestion()
         {
-            if (mode == "off") return;
+            if (fxVol <= 0.005f) return;
             var ch = th.Chords[chord];
-            voices.Add(new Bell(this, ch[0] + 24, 0.04f, 2, Bus.Fx));
-            voices.Add(new Bell(this, ch[2] + 24, 0.04f, 2, Bus.Fx) { StartAt = time + 0.16 });
+            voices.Add(new Bell(this, ch[0] + 24, 0.03f, 2, Bus.Fx));
+            voices.Add(new Bell(this, ch[2] + 24, 0.03f, 2, Bus.Fx) { StartAt = time + 0.16 });
         }
 
         void DoAnswer(bool correct)
         {
-            if (mode == "off") return;
+            if (fxVol <= 0.005f) return;
             if (correct) { int[] s = { 0, 4, 7, 12 }; for (int i = 0; i < 4; i++) voices.Add(new Tone(this, 72 + s[i], Wave.Triangle, 0.1f, 0.045f, 4000, 0.01f, 0.5f, Bus.Fx) { StartAt = time + i * 0.09 }); }
             else { voices.Add(new Tone(this, 62, Wave.Sine, 0.18f, 0.04f, 4000, 0.01f, 0.5f, Bus.Fx)); voices.Add(new Tone(this, 59, Wave.Sine, 0.18f, 0.04f, 4000, 0.01f, 0.5f, Bus.Fx) { StartAt = time + 0.18 }); }
         }

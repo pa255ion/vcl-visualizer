@@ -284,7 +284,8 @@ namespace Vcl
             if (Application.isPlaying)
             {
                 Ambience = new GameObject("ambience").AddComponent<Ambience>();
-                Ambience.SetMode(PlayerPrefs.GetString("vcl.sound", "all"));
+                Ambience.SetMusicVolume(PlayerPrefs.GetFloat("vcl.musicVol", 0.6f));
+                Ambience.SetEffectsVolume(PlayerPrefs.GetFloat("vcl.fxVol", 0.7f));
                 Ambience.SetScene(Scenery.Name);
             }
             Transcript = new Transcript(Runtime);
@@ -328,22 +329,18 @@ namespace Vcl
                     PlayerPrefs.SetString("vcl.teacher", next);
                     LoadTeacher(next);
                 },
-                SceneLabel = () => Scenery.Label(Scenery.Name),
-                CycleScene = () =>
+                Scenes = Scenery.Names,
+                Scene = () => Scenery.Name,
+                SetScene = name =>
                 {
-                    var next = Scenery.Names[(System.Array.IndexOf(Scenery.Names, Scenery.Name) + 1) % Scenery.Names.Length];
-                    Scenery.Set(next);
-                    Ambience?.SetScene(next);
-                    PlayerPrefs.SetString("vcl.scene", next);
+                    Scenery.Set(name);
+                    Ambience?.SetScene(name);
+                    PlayerPrefs.SetString("vcl.scene", name);
                 },
-                SoundLabel = () => Ambience.ModeLabel(Ambience ? Ambience.Mode : "off"),
-                CycleSound = () =>
-                {
-                    if (!Ambience) return;
-                    var next = Ambience.Modes[(System.Array.IndexOf(Ambience.Modes, Ambience.Mode) + 1) % Ambience.Modes.Length];
-                    Ambience.SetMode(next);
-                    PlayerPrefs.SetString("vcl.sound", next);
-                },
+                MusicVolume = () => Ambience ? Ambience.MusicVolume : 0,
+                EffectsVolume = () => Ambience ? Ambience.EffectsVolume : 0,
+                SetMusicVolume = v => { if (Ambience) { Ambience.SetMusicVolume(v); PlayerPrefs.SetFloat("vcl.musicVol", v); } },
+                SetEffectsVolume = v => { if (Ambience) { Ambience.SetEffectsVolume(v); PlayerPrefs.SetFloat("vcl.fxVol", v); } },
                 TranscriptShown = () => Transcript.Visible,
                 ToggleTranscript = () => Transcript.Visible = !Transcript.Visible,
             };

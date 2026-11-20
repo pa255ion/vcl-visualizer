@@ -372,14 +372,16 @@ namespace Vcl.EditorTools
                     new LessonInfo { Path = "library/u02/03.md", Title = "Lesson 2.3 — Relaxation: inference as gradient descent on the states", Folder = "u02-predictive-coding" },
                 };
                 m.Status = "4 lessons from http://127.0.0.1:8093";
+                m.MusicVolume = () => 0.6f;
+                m.EffectsVolume = () => 0.35f;
                 m.Toggle(cam.transform);
                 Render(Path.Combine(dir, "menu-1.png"));
-                m.Key(1, false);
-                m.Key(1, false);
-                m.Key(1, false);
-                m.Key(0, true); // into the first folder
+                m.Key(5, false); // the second folder (after the two tabs, Stop and the first folder)
+                m.Key(0, true);
                 m.Key(2, false);
                 Render(Path.Combine(dir, "menu-2.png"));
+                m.SettingsTab = true;
+                Render(Path.Combine(dir, "menu-3.png"));
             }
         }
     }

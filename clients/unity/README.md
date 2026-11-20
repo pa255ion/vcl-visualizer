@@ -118,13 +118,16 @@ The menu also has a **Voice** switch (robot voice or subtitles only) and a
   grid, distant towers, rising motes) or Demo (synthwave sun, scrolling grid,
   rotating vector shapes). Built from shaders and generated meshes
   (`Resources/Vcl*.shader`, `Scenery.cs`).
-* **Sound**: music (generative music in the scene's key, a background bed,
-  soft sounds as things are drawn, the music dipping under speech), effects
-  only, or off. Synthesized on the audio thread (`Ambience.cs`), no audio files.
+* **Music** and **Effects** volume bars (point along a bar and pull the
+  trigger): generative music in the scene's key with a background bed, the
+  music dipping under speech, and soft sounds as things are drawn.
+  Synthesized on the audio thread (`Ambience.cs`), no audio files.
+
+The menu has two tabs: **Lessons** (and Stop) and **Settings** (everything above).
 
 The **menu** lists the server's built-in lessons and its `--lessons` library,
 one folder per subfolder; point with either controller and pull the trigger.
-It also has Stop, step mode, Upright/Recline, Voice and Transcript. Picking a lesson clears the
+Its Settings tab has the rest (see above). Picking a lesson clears the
 board and posts the lesson to the server, so every connected viewer plays it.
 
 **Reclined** (for lying down): recentring aligns the whole room with your view,

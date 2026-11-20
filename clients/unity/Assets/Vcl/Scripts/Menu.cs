@@ -1,7 +1,9 @@
-// The in-headset menu: pick a lesson (built-in or from the server's
-// --lessons library), stop, step mode, and how the room is aligned (upright,
-// or to your view when reclining). A world-space panel, pointed at with
-// either controller; the trigger presses, the thumbstick pages.
+// The in-headset menu, two tabs. Lessons: pick one (built-in or from the
+// server's --lessons library), or stop. Settings: playback (speed, step mode,
+// move mode), the room (upright or reclined, the transcript), the teacher, the
+// scene, and the music and effects volumes. A world-space panel, pointed at
+// with either controller; the trigger presses (on a volume bar: sets it where
+// you point), the thumbstick pages.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,6 +25,7 @@ namespace Vcl
         {
             public Rect R;
             public Action Do;
+            public Action<float> DoAt; // sliders: where along the button (0–1) it was pressed
             public Transform Bg;
             public Material Mat;
             public Color Base;
@@ -30,7 +33,7 @@ namespace Vcl
 
         const float Scale = 0.05f;         // panel units → metres
         const float W = 22, H = 16, RowH = 1.12f;
-        const int PerPage = 7;
+        const int PerPage = 9;
 
         public bool Open => root && root.gameObject.activeSelf;
         public List<LessonInfo> Lessons = new List<LessonInfo>();
@@ -41,12 +44,17 @@ namespace Vcl
         public Action Stop, ToggleStep, ToggleVoice, ToggleTranscript, Upright, Recline, Refresh;
         public Func<bool> Stepping, Reclined, Voiced, TranscriptShown, Moving;
         public Action CycleSpeed, ToggleMove, CycleTeacher;
-        public Func<string> SpeedLabel, TeacherLabel, SceneLabel, SoundLabel;
-        public Action CycleScene, CycleSound;
+        public Func<string> SpeedLabel, TeacherLabel, Scene;
+        public string[] Scenes = { };
+        public Action<string> SetScene;
+        public Func<float> MusicVolume, EffectsVolume;
+        public Action<float> SetMusicVolume, SetEffectsVolume;
 
         Transform root, content;
         readonly List<Button> buttons = new List<Button>();
         string folder; // null: the folder list
+        bool settings; // the Settings tab is showing
+        public bool SettingsTab { get => settings; set { settings = value; Rebuild(); } }
         int page;
         Button hover;
         int keyIndex = -1; // desktop: keyboard selection
@@ -104,27 +112,18 @@ namespace Vcl
         public void Rebuild()
         {
             if (!root) return;
-            foreach (Transform c in content) Draw.Kill(c.gameObject);
+            foreach (var c in content.Cast<Transform>().ToList()) Draw.Kill(c.gameObject);
             buttons.Clear();
             hover = null;
             float top = H / 2 - 0.9f, left = -W / 2 + 0.7f, right = W / 2 - 0.7f;
 
-            // Header: where we are, and the actions.
-            Label(folder == null ? "Lessons" : Short(folder, 14), new Vector3(left, top, 0), 0.95f, Draw.FG, "left", true);
-            float x1 = ActionButton(right, top, "Stop", () => { Stop(); Rebuild(); });
-            x1 = ActionButton(x1, top, "Speed " + SpeedLabel(), () => { CycleSpeed(); Rebuild(); });
-            ActionButton(x1, top, Moving() ? "Move: on" : "Move: off", () => { ToggleMove(); Rebuild(); });
-            // Settings, on a row of their own.
-            float x = right, row2 = top - 1.25f;
-            x = ActionButton(x, row2, Reclined() ? "Upright" : "Recline", () => { if (Reclined()) Upright(); else Recline(); Rebuild(); });
-            x = ActionButton(x, row2, Stepping() ? "Step: on" : "Step: off", () => { ToggleStep(); Rebuild(); });
-            x = ActionButton(x, row2, Voiced() ? "Voice: on" : "Voice: off", () => { ToggleVoice(); Rebuild(); });
-            ActionButton(x, row2, TranscriptShown() ? "Transcript: on" : "Transcript: off", () => { ToggleTranscript(); Rebuild(); });
-            // The teacher: the robot, or a VRM avatar from the server's assets.
-            float row3 = row2 - 1.15f;
-            float x3 = ActionButton(right, row3, "Teacher: " + TeacherLabel(), () => { CycleTeacher(); Rebuild(); });
-            x3 = ActionButton(x3, row3, "Sound: " + SoundLabel(), () => { CycleSound(); Rebuild(); });
-            ActionButton(x3, row3, "Scene: " + SceneLabel(), () => { CycleScene(); Rebuild(); });
+            // Header: the tabs, and Stop.
+            Tab(left, top, "Lessons", !settings, () => { settings = false; Rebuild(); });
+            Tab(left + 5.4f, top, "Settings", settings, () => { settings = true; Rebuild(); });
+            ActionButton(right, top, "■ Stop", () => { Stop(); Rebuild(); });
+            var rule = Draw.MeshObject(content, "rule", Draw.Fill(Draw.RoundedRect(right - left + 0.4f, 0.04f, 0.02f)), Draw.Unlit(Draw.Hex("#26324a"), 3110), 22).transform;
+            rule.localPosition = new Vector3(0, top - 0.85f, -0.01f);
+            if (settings) { BuildSettings(top - 2.0f, left, right); Footer(1); return; }
 
             // Rows: folders, or the lessons of one folder.
             var rows = new List<(string text, Action act, string hint)>();
@@ -148,7 +147,7 @@ namespace Vcl
             }
             int pages = Mathf.Max(1, (rows.Count + PerPage - 1) / PerPage);
             page = Mathf.Clamp(page, 0, pages - 1);
-            float y = top - 3.9f;
+            float y = top - 1.75f;
             foreach (var r in rows.Skip(page * PerPage).Take(PerPage))
             {
                 AddButton(new Rect(left - 0.2f, y - RowH / 2 + 0.06f, right - left + 0.4f, RowH - 0.12f), "#16202c", r.act);
@@ -157,8 +156,13 @@ namespace Vcl
                 y -= RowH;
             }
 
-            // Footer: pages, and what is going on.
-            float fy = -H / 2 + 0.9f;
+            Footer(pages);
+        }
+
+        /// <summary>Paging (if there are pages), what is going on, and the controls.</summary>
+        void Footer(int pages)
+        {
+            float fy = -H / 2 + 0.9f, left = -W / 2 + 0.7f, right = W / 2 - 0.7f;
             if (pages > 1)
             {
                 AddButton(new Rect(left - 0.2f, fy - 0.45f, 2.6f, 0.9f), "#1c2a3d", () => { page = Mathf.Max(0, page - 1); Rebuild(); });
@@ -169,6 +173,88 @@ namespace Vcl
             }
             Label(Status, new Vector3(0, fy - 0.95f, -0.02f), 0.45f, Draw.Hex("#8a98ab"));
             Label("trigger: choose · stick: page · A/X: close · B/Y: pause · stick ◀ ▶: step", new Vector3(0, -H / 2 - 0.6f, -0.02f), 0.45f, Draw.Hex("#6b7a8f"));
+        }
+
+        /// <summary>The Settings tab: a label on the left of each row, its controls on the right.</summary>
+        void BuildSettings(float y, float left, float right)
+        {
+            const float RowStep = 1.55f;
+            Color muted = Draw.Hex("#8a98ab");
+            void Row(string label) => Label(label, new Vector3(left, y, -0.02f), 0.6f, muted, "left");
+            float x0 = left + 4.6f; // controls start here
+
+            Row("Playback");
+            float x = x0;
+            x = Pill(x, y, "Speed " + SpeedLabel(), false, () => { CycleSpeed(); Rebuild(); });
+            x = Pill(x, y, "Step mode", Stepping(), () => { ToggleStep(); Rebuild(); });
+            Pill(x, y, "Move", Moving(), () => { ToggleMove(); Rebuild(); });
+            y -= RowStep;
+
+            Row("Room");
+            x = Pill(x0, y, "Reclined", Reclined(), () => { if (Reclined()) Upright(); else Recline(); Rebuild(); });
+            Pill(x, y, "Transcript", TranscriptShown(), () => { ToggleTranscript(); Rebuild(); });
+            y -= RowStep;
+
+            Row("Teacher");
+            x = Pill(x0, y, TeacherLabel(), false, () => { CycleTeacher(); Rebuild(); });
+            Pill(x, y, "Voice", Voiced(), () => { ToggleVoice(); Rebuild(); });
+            y -= RowStep;
+
+            Row("Scene");
+            x = x0;
+            foreach (var name in Scenes)
+            {
+                var n = name;
+                x = Pill(x, y, Scenery.Label(n), Scene() == n, () => { SetScene(n); Rebuild(); });
+            }
+            y -= RowStep;
+
+            Row("Music");
+            Slider(x0, right, y, MusicVolume(), v => { SetMusicVolume(v); Rebuild(); });
+            y -= RowStep;
+            Row("Effects");
+            Slider(x0, right, y, EffectsVolume(), v => { SetEffectsVolume(v); Rebuild(); });
+        }
+
+        /// <summary>A toggle-style button, lit when on; returns where the next one starts.</summary>
+        float Pill(float x, float y, string text, bool on, Action act)
+        {
+            float w = Mathf.Max(2.4f, text.Length * 0.34f + 1.0f);
+            AddButton(new Rect(x, y - 0.48f, w, 0.96f), on ? "#1f5f7a" : "#1c2a3d", act);
+            Label(text, new Vector3(x + w / 2, y, -0.02f), 0.56f, on ? Draw.Hex("#bff2ff") : Draw.FG);
+            return x + w + 0.3f;
+        }
+
+        void Tab(float x, float y, string text, bool on, Action act)
+        {
+            AddButton(new Rect(x - 0.3f, y - 0.55f, 5.0f, 1.1f), on ? "#16202c" : "#0d1420", act);
+            Label(text, new Vector3(x + 2.2f, y, -0.02f), 0.8f, on ? Draw.FG : Draw.Hex("#6b7a8f"), "center", on);
+            if (on)
+            {
+                var bar = Draw.MeshObject(content, "tab", Draw.Fill(Draw.RoundedRect(3.2f, 0.12f, 0.06f)), Draw.Unlit(Draw.Hex("#7fe3ff"), 3112), 23).transform;
+                bar.localPosition = new Vector3(x + 2.2f, y - 0.62f, -0.015f);
+            }
+        }
+
+        /// <summary>A volume bar: point anywhere along it and pull the trigger to set it there.</summary>
+        void Slider(float x0, float x1, float y, float v, Action<float> set)
+        {
+            float w = x1 - x0 - 2.2f, h = 0.9f;
+            AddButton(new Rect(x0, y - h / 2, w, h), "#121a26", null);
+            var b = buttons[buttons.Count - 1];
+            b.Do = () => { };
+            b.DoAt = f => set(Mathf.Round(Mathf.Clamp01((f * w - 0.2f) / (w - 0.4f)) * 20) / 20);
+            float inner = w - 0.4f, fill = Mathf.Max(0.001f, inner * v);
+            var track = Draw.MeshObject(content, "track", Draw.Fill(Draw.RoundedRect(inner, 0.18f, 0.09f)), Draw.Unlit(Draw.Hex("#253145"), 3112), 23).transform;
+            track.localPosition = new Vector3(x0 + w / 2, y, -0.012f);
+            if (v > 0)
+            {
+                var f = Draw.MeshObject(content, "fill", Draw.Fill(Draw.RoundedRect(fill, 0.18f, 0.09f)), Draw.Unlit(Draw.Hex("#7fe3ff"), 3113), 24).transform;
+                f.localPosition = new Vector3(x0 + 0.2f + fill / 2, y, -0.014f);
+            }
+            var knob = Draw.MeshObject(content, "knob", Draw.Disc(0.26f, 24), Draw.Unlit(Color.white, 3114), 25).transform;
+            knob.localPosition = new Vector3(x0 + 0.2f + inner * v, y, -0.016f);
+            Label(v > 0 ? $"{Mathf.RoundToInt(v * 100)}%" : "off", new Vector3(x1, y, -0.02f), 0.56f, Draw.Hex("#8a98ab"), "right");
         }
 
         float ActionButton(float right, float y, string text, Action act)
@@ -221,7 +307,11 @@ namespace Vcl
                 dot.localPosition = new Vector3(at.x, at.y, -0.05f);
             }
             SetHover(hit);
-            if (press && hit != null) { hit.Do(); return true; }
+            if (press && hit != null)
+            {
+                if (hit.DoAt != null) hit.DoAt((at.x - hit.R.xMin) / hit.R.width); else hit.Do();
+                return true;
+            }
             return false;
         }
 
