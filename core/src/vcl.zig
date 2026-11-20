@@ -510,7 +510,56 @@ fn containsAnswer(hay: []const u8, needle: []const u8) bool {
         if (!numeric and (std.ascii.isAlphanumeric(before) or std.ascii.isAlphanumeric(after))) continue;
         return true;
     }
+    // A formula matches however it is spaced: "V=IR" is "V = I R".
+    if (std.mem.indexOfAny(u8, n, "=+*/^<>") != null) {
+        var buf_h: [512]u8 = undefined;
+        var buf_n: [256]u8 = undefined;
+        const h2 = squeeze(&buf_h, hay);
+        const n2 = squeeze(&buf_n, n);
+        if (n2.len >= 3 and std.ascii.indexOfIgnoreCase(h2, n2) != null) return true;
+    }
     return false;
+}
+
+/// The text without spaces (truncated to the buffer).
+fn squeeze(buf: []u8, t: []const u8) []const u8 {
+    var k: usize = 0;
+    for (t) |c| {
+        if (c == ' ' or c == '\t' or c == '\n') continue;
+        if (k == buf.len) break;
+        buf[k] = c;
+        k += 1;
+    }
+    return buf[0..k];
+}
+
+/// Does the text hold most of the answer's key words (at least 3 of them, and
+/// 80%)? A near-quote of a recall answer gives it away as surely as a quote.
+fn holdsKeyWords(hay: []const u8, answer: []const u8) bool {
+    var keys: usize = 0;
+    var found: usize = 0;
+    var it = std.mem.tokenizeAny(u8, answer, " \t\n,.?!:;'\"()");
+    while (it.next()) |w| {
+        if (w.len < 4 or isStopWord(w)) continue;
+        keys += 1;
+        if (containsWord(hay, w)) found += 1;
+    }
+    return keys >= 3 and found * 5 >= keys * 4;
+}
+
+/// How many numbers the text holds (runs of digits, with their decimal point).
+fn countNumbers(t: []const u8) usize {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < t.len) {
+        if (!std.ascii.isDigit(t[i])) {
+            i += 1;
+            continue;
+        }
+        n += 1;
+        while (i < t.len and (std.ascii.isDigit(t[i]) or (t[i] == '.' and i + 1 < t.len and std.ascii.isDigit(t[i + 1])))) i += 1;
+    }
+    return n;
 }
 
 fn containsWord(hay: []const u8, w: []const u8) bool {
@@ -1042,6 +1091,7 @@ const LineParser = struct {
         const op = p.op.name;
         const q = fieldStr(fields, "q") orelse "";
         var needles: std.ArrayList([]const u8) = .empty; // texts that would give the answer away
+        var short_num: ?[]const u8 = null; // an estimate answer of one or two digits
         if (std.mem.eql(u8, op, "recall")) {
             const a = fieldStr(fields, "answer").?;
             var words: usize = 0;
@@ -1056,6 +1106,9 @@ const LineParser = struct {
             var buf: std.ArrayList(u8) = .empty;
             try dataNum(p.arena, &buf, a);
             if (buf.items.len >= 2) try needles.append(p.arena, buf.items);
+            var digits: usize = 0;
+            for (buf.items) |c| digits += @intFromBool(std.ascii.isDigit(c));
+            if (digits <= 2) short_num = buf.items;
         }
         const answer: []const Value = if (fieldVal(fields, "answer")) |v| (if (v == .list) v.list else &.{}) else &.{};
         if (std.mem.eql(u8, op, "quiz")) {
@@ -1078,8 +1131,13 @@ const LineParser = struct {
         for (needles.items) |n| {
             for (p.scene.names.keys(), p.scene.names.values()) |id, e| {
                 if (e.hidden or e.shown.len == 0) continue;
+                // A one- or two-digit number among many (a table of weights) is chance.
+                if (short_num != null and short_num.?.ptr == n.ptr and countNumbers(e.shown) >= 4) continue;
                 if (containsAnswer(e.shown, n)) {
                     return p.warn("{s}: its answer is on the board (\"{s}\" in {s}); fade it first (fade {s} 0), and back after", .{ op, clip(n, 40), id, id });
+                }
+                if (std.mem.eql(u8, op, "recall") and holdsKeyWords(e.shown, n)) {
+                    return p.warn("recall: most of its answer's words are on the board (in {s}); fade it first (fade {s} 0), and back after", .{ id, id });
                 }
             }
         }
@@ -3142,6 +3200,11 @@ test "question advice: answers on the board, giveaways, long cards" {
         \\q7: quiz "Why?" "Because the curvature across the valley is far larger than along it, so the step must suit the steep side" "Too small" "Too big" answer=1
         \\q8: recall "Explain it." "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
         \\q9: recall "List today's ideas." "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
+        \\w: text 0,-2 "w: 0.5 -1 2 | 1 -1 0.25 | 3 4"
+        \\f: text 0,-3 "P=IV and clocked flops hold state between edges"
+        \\q11: recall "Power?" "P = I V"
+        \\q12: recall "What do flops do?" "Clocked flops hold their state between clock edges."
+        \\q10: estimate "The weight?" -4..4 answer=-1
         \\say "It is 3.14159 metres."
         \\say "About 3.1 metres, version 1.2.3 aside."
     , .vcl);
@@ -3161,8 +3224,11 @@ test "question advice: answers on the board, giveaways, long cards" {
     try testing.expect(has(got, "\"line\":12,\"msg\":\"quiz: the right option is much the longest"));
     try testing.expect(has(got, "\"line\":13,\"msg\":\"recall: the answer has 21 words"));
     try testing.expect(!has(got, "\"line\":14,\"msg\"")); // a recap may be a list
-    try testing.expect(has(got, "\"line\":15,\"msg\":\"say: round numbers for speech (\\\"3.14159\\\""));
-    try testing.expect(!has(got, "\"line\":16,\"msg\":\"say: round"));
+    try testing.expect(!has(got, "\"line\":19,\"msg\"")); // -1 among a table's numbers is chance
+    try testing.expect(has(got, "\"line\":17,\"msg\":\"recall: its answer is on the board (\\\"P = I V\\\" in f)"));
+    try testing.expect(has(got, "\"line\":18,\"msg\":\"recall: most of its answer's words are on the board (in f)"));
+    try testing.expect(has(got, "\"line\":20,\"msg\":\"say: round numbers for speech (\\\"3.14159\\\""));
+    try testing.expect(!has(got, "\"line\":21,\"msg\":\"say: round"));
 }
 
 test "data: without anything to run the code, an error" {

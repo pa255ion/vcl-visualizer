@@ -242,15 +242,36 @@ the talk, which is why the key ideas need to be in questions.
 ## Checking a lesson
 
 `vcl check` already warns about the commonest question problems: an answer
-readable on the board when the question is asked (fade it first), a `pick`
+readable on the board when the question is asked (fade it first; formulas
+match however they are spaced, and a recall answer whose key words are mostly
+on one board text counts too; a one- or two-digit estimate among a table's
+numbers doesn't), a `pick`
 whose right choice is labelled with a word from the question, a recall answer
 over about 20 words (except a recap card that asks to list or recap), a right option much longer than the others, an estimate
 answer in the middle of its range, and unrounded numbers in speech.
 `vcl check --design FILE…` also reviews the lesson as a whole against this
 guide: unnamed or repeated question names, the minutes of talk before the
 first question and between questions, a prediction question, review questions
-(`from=`), a recall card near the end, board text that repeats the speech, and
-sentences too long to follow by ear.
+(`from=`), a recall card near the end and before your recap board (text
+headed "Recap", "Summary", "Key ideas"…), board text that repeats the speech,
+and sentences too long to follow by ear (a number spoken as words counts as
+one word).
+
+The check matches words, not meaning: a paraphrase of the answer on the
+board, or a box labelled with its meaning, still needs a reader's eye.
+
+When a finding is deliberate, say so in a comment and it stops printing:
+`# design-ok: why` on the line of the finding or the line above (in a `.md`,
+`<!-- design-ok: why -->` works too) waves through that line's warnings and
+design notes, never its errors. A lesson-wide note is waved through by a
+`design-ok` comment anywhere whose reason names its topic: "review" or
+"from=", "predict", "recap" or "recall", "pace", "minutes" or "questions".
+
+```vcl
+# design-ok: review — this is the first lesson, there is nothing earlier
+# design-ok: the central question, read aloud word for word on purpose
+q: text 0,2 "Can early stopping let predictive coding escape its cost bound?"
+```
 
 ## Checklist before you finish a lesson
 

@@ -166,7 +166,7 @@ fn check(io: Io, gpa: Allocator, arena: Allocator, env: *const std.process.Envir
             }
             const d = try std.json.parseFromSlice(DiagJson, gpa, line, .{ .ignore_unknown_fields = true });
             defer d.deinit();
-            if (std.mem.eql(u8, d.value.level, "error")) errors += 1;
+            if (std.mem.eql(u8, d.value.level, "error")) errors += 1 else if (design.waived(src, d.value.line)) continue;
             try out.print("{s}:{d}: {s}: {s}\n", .{ path, d.value.line, d.value.level, d.value.msg });
         }
         if (review) {
@@ -174,6 +174,7 @@ fn check(io: Io, gpa: Allocator, arena: Allocator, env: *const std.process.Envir
             var arena_state = std.heap.ArenaAllocator.init(gpa);
             defer arena_state.deinit();
             for (try design.review(arena_state.allocator(), ir)) |f| {
+                if (if (f.line) |l| design.waived(src, l) else design.waivedLesson(src, f.msg)) continue;
                 if (f.line) |l| try out.print("{s}:{d}: design: {s}\n", .{ path, l, f.msg }) else try out.print("{s}: design: {s}\n", .{ path, f.msg });
             }
         }

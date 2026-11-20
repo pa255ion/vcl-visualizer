@@ -14,7 +14,7 @@ pub const Finding = struct {
 
 const Question = struct { line: u32, op: []const u8, id: ?[]const u8, predict: bool, review: bool, at: f64 };
 const Say = struct { line: u32, text: []const u8, at: f64 };
-const Text = struct { line: u32, text: []const u8, says_before: usize };
+const Text = struct { line: u32, text: []const u8, says_before: usize, at: f64 };
 
 /// Findings about the lesson whose IR (JSON lines) is `ir`. Strings live in `a`.
 pub fn review(a: Allocator, ir: []const u8) ![]Finding {
@@ -45,7 +45,7 @@ pub fn review(a: Allocator, ir: []const u8) ![]Finding {
                 .review = o.get("from") != null,
             });
         } else if (std.mem.eql(u8, op, "text") or std.mem.eql(u8, op, "node")) {
-            if (str(o, "text")) |t| try texts.append(a, .{ .line = line, .text = t, .says_before = says.items.len });
+            if (str(o, "text")) |t| try texts.append(a, .{ .line = line, .text = t, .says_before = says.items.len, .at = talk });
         }
     }
 
@@ -83,11 +83,29 @@ pub fn review(a: Allocator, ir: []const u8) ![]Finding {
             try out.append(a, .{ .line = null, .msg = try std.fmt.allocPrint(a, "{d} questions in about {d:.0} minutes of talk; aim for one every 1–2 minutes", .{ questions.items.len, minutes }) });
         var predicts: usize = 0;
         var reviews: usize = 0;
+        // The teacher's recap board: the first board text near the end that says so.
+        var recap: ?Text = null;
+        for (texts.items) |t| if (t.at >= talk * 0.6 and isRecap(t.text)) {
+            recap = t;
+            break;
+        };
         var late_recall = false;
+        var recall_after: ?u32 = null; // a late recall that comes only after the recap board
         for (questions.items) |q| {
             if (q.predict) predicts += 1;
             if (q.review) reviews += 1;
-            if (std.mem.eql(u8, q.op, "recall") and q.at >= talk * 0.7) late_recall = true;
+            if (std.mem.eql(u8, q.op, "recall") and q.at >= talk * 0.6) {
+                if (recap != null and q.line > recap.?.line) {
+                    recall_after = q.line;
+                } else late_recall = true;
+            }
+        }
+        if (!late_recall and recap != null and talk > 240) {
+            try out.append(a, .{ .line = recap.?.line, .msg = if (recall_after) |l|
+                try std.fmt.allocPrint(a, "your recap board comes before the learner's (the recall on line {d}); ask them to list the ideas first", .{l})
+            else
+                "a recap board, but no recall card before it: let the learner recap today's ideas before you do" });
+            late_recall = true;
         }
         if (predicts == 0 and talk > 120)
             try out.append(a, .{ .line = null, .msg = "no prediction question (predict=true) before new material: a guess first helps, even a wrong one" });
@@ -141,12 +159,92 @@ fn wordCount(t: []const u8) usize {
     return n;
 }
 
-/// Words in the longest sentence (split at . ! ? and ;).
+/// Words in the longest sentence (split at . ! ? and ;). A number spoken
+/// as words ("one point eight five five") counts as one word.
 fn longestSentence(t: []const u8) usize {
     var best: usize = 0;
-    var it = std.mem.tokenizeAny(u8, t, ".!?;");
-    while (it.next()) |s| best = @max(best, wordCount(s));
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i <= t.len) : (i += 1) {
+        // A sentence ends at ! ? ; or a full stop that isn't inside a number (1.855).
+        const end = i == t.len or switch (t[i]) {
+            '!', '?', ';' => true,
+            '.' => i + 1 == t.len or !std.ascii.isDigit(t[i + 1]),
+            else => false,
+        };
+        if (!end) continue;
+        const s = t[start..i];
+        start = i + 1;
+        var n: usize = 0;
+        var in_number = false;
+        var w = std.mem.tokenizeAny(u8, s, " \t\n,");
+        while (w.next()) |word| {
+            const num_word = isNumberWord(word);
+            if (!(num_word and in_number)) n += 1;
+            in_number = num_word;
+        }
+        best = @max(best, n);
+    }
     return best;
+}
+
+fn isNumberWord(w: []const u8) bool {
+    if (w.len > 0 and (std.ascii.isDigit(w[0]) or w[0] == '-')) return std.fmt.parseFloat(f64, w) catch null != null;
+    const words = [_][]const u8{ "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand", "million", "billion", "point", "minus", "negative" };
+    for (words) |x| if (std.ascii.eqlIgnoreCase(w, x)) return true;
+    // twenty-one, thirty-five
+    if (std.mem.indexOfScalar(u8, w, '-')) |i| return isNumberWord(w[0..i]) and isNumberWord(w[i + 1 ..]);
+    return false;
+}
+
+/// Board text that heads the teacher's own recap ("Recap", "Summary", "Today's ideas"…).
+fn isRecap(t: []const u8) bool {
+    const heads = [_][]const u8{ "recap", "summary", "in summary", "takeaways", "key ideas", "today's ideas", "what we covered" };
+    const head = std.mem.trim(u8, t[0 .. std.mem.indexOfAny(u8, t, ":\n") orelse t.len], " \t");
+    for (heads) |h| if (std.ascii.startsWithIgnoreCase(head, h)) return true;
+    return false;
+}
+
+/// Is a finding on line `line` (1-based) waved through by a `design-ok`
+/// comment on that line or the line above (`# design-ok: why`, or
+/// `<!-- design-ok -->` in a .md)? Applies to warnings and design notes.
+pub fn waived(src: []const u8, line: ?u32) bool {
+    const l = line orelse return false;
+    return waivedLine(src, l);
+}
+
+/// A lesson-wide note (no line) is waved through by a `design-ok` comment
+/// anywhere whose reason names its topic: "review"/"from=", "predict",
+/// "recap"/"recall", or "pace"/"minutes"/"questions".
+pub fn waivedLesson(src: []const u8, msg: []const u8) bool {
+    const topics = [_]struct { msg: []const u8, words: []const []const u8 }{
+        .{ .msg = "review question", .words = &.{ "review", "from=" } },
+        .{ .msg = "prediction", .words = &.{"predict"} },
+        .{ .msg = "recap", .words = &.{ "recap", "recall" } },
+        .{ .msg = "minutes of talk", .words = &.{ "pace", "minutes", "questions" } },
+    };
+    var it = std.mem.splitScalar(u8, src, '\n');
+    while (it.next()) |l| {
+        const at = std.mem.indexOf(u8, l, "design-ok") orelse continue;
+        const why = l[at..];
+        for (topics) |t| {
+            if (std.mem.indexOf(u8, msg, t.msg) == null) continue;
+            for (t.words) |w| if (std.ascii.indexOfIgnoreCase(why, w) != null) return true;
+        }
+    }
+    return false;
+}
+
+fn waivedLine(src: []const u8, line: u32) bool {
+    if (line == 0) return false;
+    var it = std.mem.splitScalar(u8, src, '\n');
+    var n: u32 = 1;
+    while (it.next()) |l| : (n += 1) {
+        if (n + 1 < line) continue;
+        if (n > line) break;
+        if (std.mem.indexOf(u8, l, "design-ok") != null) return true;
+    }
+    return false;
 }
 
 /// Is the board text, word for word (ignoring case and punctuation), inside the sentence?
@@ -200,4 +298,37 @@ test review {
     try std.testing.expect(has(m, "no prediction question"));
     try std.testing.expect(has(m, "1 review question(s)"));
     try std.testing.expect(has(m, "no recall card near the end"));
+}
+
+test "spoken numbers count as one word; recap order; design-ok" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // "one point eight five five" counts once, like "1.855": 25 words either way.
+    const n = longestSentence("The delay is one point eight five five nanoseconds at twenty-one degrees, which is the figure we measured on the board last week in the lab with the scope");
+    try std.testing.expectEqual(@as(usize, 25), n);
+    try std.testing.expectEqual(@as(usize, 25), longestSentence("The delay is 1.855 nanoseconds at 21 degrees, which is the figure we measured on the board last week in the lab with the scope"));
+
+    const ir =
+        \\{"op":"say","line":1,"dur":200,"text":"Talk."}
+        \\{"op":"quiz","id":"q1","line":2,"q":"?","options":["a","b"],"answer":[1],"predict":true}
+        \\{"op":"say","line":3,"dur":100,"text":"Talk."}
+        \\{"op":"text","id":"r","line":4,"text":"Recap: clocks, handshakes"}
+        \\{"op":"recall","id":"q2","line":5,"q":"List today's ideas.","answer":"x"}
+        \\{"op":"say","line":6,"dur":10,"text":"Done."}
+    ;
+    const found = try review(arena.allocator(), ir);
+    var hit = false;
+    for (found) |f| {
+        if (std.mem.indexOf(u8, f.msg, "no recall card near the end") != null) return error.TestUnexpectedResult;
+        if (f.line == 4 and std.mem.indexOf(u8, f.msg, "before the learner's (the recall on line 5)") != null) hit = true;
+    }
+    try std.testing.expect(hit);
+
+    const src = "a\n# design-ok: read aloud on purpose\nt: text 0,0 \"x\"\nq: recall \"?\" \"x\"\n";
+    try std.testing.expect(waived(src, 3));
+    try std.testing.expect(waived(src, 2));
+    try std.testing.expect(!waived(src, 4));
+    try std.testing.expect(!waived(src, 1));
+    try std.testing.expect(waivedLesson("# design-ok: no from= review questions; the first lesson\n", "0 review question(s) from earlier lessons"));
+    try std.testing.expect(!waivedLesson("# design-ok: no from= review questions\n", "no prediction question"));
 }
