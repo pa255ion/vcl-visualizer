@@ -56,7 +56,8 @@ namespace Vcl
         public readonly Cmd Cmd;
         public Entity ParentEnt;
         public AxesInfo Axes;      // set when the entity's points are axes data
-        public AxesInfo AxesSelf;  // set on axes entities
+        public AxesInfo AxesSelf;  // set on axes entities (and figures from code, once their axes are known)
+        public List<Action> Waiting; // figures from code: what sits on it, until its axes are known
         public readonly Transform Obj, Body;
         public readonly List<Tint> Tints = new List<Tint>();
         public readonly Dictionary<string, float> Factor = new Dictionary<string, float> { ["fill"] = 1, ["label"] = 1 };
@@ -683,14 +684,29 @@ namespace Vcl
                 {
                     Remove(cmd.Id);
                     Entity parent = cmd.Has("on") ? Get(cmd.Str("on")) : null;
-                    e = new Entity(this, cmd, parent);
-                    try { Build(e, cmd); }
-                    catch { e.Dispose(); throw; }
-                    Register(e);
+                    void Make()
+                    {
+                        e = new Entity(this, cmd, parent);
+                        try { Build(e, cmd); }
+                        catch { e.Dispose(); throw; }
+                        Register(e);
+                    }
+                    // On a figure from code whose axes aren't known yet (still rendering): when they are.
+                    if (parent != null && parent.Op == "fig" && parent.AxesSelf == null)
+                    {
+                        (parent.Waiting ??= new List<Action>()).Add(() =>
+                        {
+                            if (!Entities.TryGetValue(cmd.Str("on"), out var now) || now != parent) return;
+                            try { Make(); e.Enter(1, 1); }
+                            catch (Exception ex) { Log("error", $"line {cmd.Line}: {cmd.Op}: {ex.Message}"); }
+                        });
+                        return;
+                    }
+                    Make();
                     e.Enter(0, 0);
                 },
-                Update = (eased, raw) => e.Enter(eased, raw),
-                Finish = () => e.Enter(1, 1),
+                Update = (eased, raw) => e?.Enter(eased, raw),
+                Finish = () => e?.Enter(1, 1),
             };
         }
 
@@ -721,7 +737,18 @@ namespace Vcl
             {
                 case "wait": return new Task();
                 case "say": return new Task { Begin = () => Avatar?.Say(c.Str("text"), (float)c.Dur / Speed) };
-                case "point": return new Task { Begin = () => Avatar?.Point(c.Has("at") ? PointWorld(c["at"]) : (Vector3?)null, (float)c.Dur) };
+                case "point":
+                    return new Task
+                    {
+                        Begin = () =>
+                        {
+                            Vector3? at = c.Has("at") ? PointWorld(c["at"]) : (Vector3?)null;
+                            // In axes' or a figure's data coordinates.
+                            if (c.Has("on") && c.Has("at") && !IsRef(c["at"]) && Entities.TryGetValue(c.Str("on"), out var on))
+                                at = on.Obj.TransformPoint(on.AxesSelf != null ? on.AxesSelf.Map(Raw(c["at"])) : Vector3.zero);
+                            Avatar?.Point(at, (float)c.Dur);
+                        },
+                    };
                 case "title": return Create(c.With("id", "__title").With("op", "title"));
                 case "board": return BoardTask(c);
                 case "clear": return FadeOutAndRemove(() => { Avatar?.Point(null, 0); return new List<Entity>(Entities.Values); });

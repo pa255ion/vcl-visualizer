@@ -51,12 +51,12 @@
             pkgs.octave
             pkgs.gnuplot
             pkgs.librsvg    # rsvg-convert: Octave figures to PNG
-          ] ++ pkgs.lib.optional pkgs.stdenv.isLinux pkgs.bubblewrap;
+          ] ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.bubblewrap;
           VCL_PYTHON = "${figPython pkgs}/bin/python3";
           VCL_OCTAVE = "${pkgs.octave}/bin/octave-cli";
           VCL_GNUPLOT = "${pkgs.gnuplot}/bin";
           VCL_RSVG = "${pkgs.librsvg}/bin";
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { VCL_BWRAP = "${pkgs.bubblewrap}/bin/bwrap"; });
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { VCL_BWRAP = "${pkgs.bubblewrap}/bin/bwrap"; });
       } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
         unity = unityShell system;
       });

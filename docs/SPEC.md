@@ -299,7 +299,7 @@ old ones.
 
 | Op | Arguments | Keys |
 |---|---|---|
-| `fig` | `P LANG S` | a figure drawn by code: `LANG` is `python` (matplotlib) or `octave`; the code is the string, usually a `<<END` block; `size=N` (width, default 8) |
+| `fig` | `P LANG S` | a figure drawn by code (things go on it with `on=`, see below): `LANG` is `python` (matplotlib) or `octave`; the code is the string, usually a `<<END` block; `size=N` (width, default 8) |
 
 ```
 p: fig 0,0 python size=9 <<END
@@ -326,6 +326,14 @@ published copy) in a sandbox: no network, no files but a scratch directory, 30 s
 of CPU. If the code fails, the figure shows the error and the line gets a
 diagnostic `fig: <error> (code line N)`. A figure is keyed by its code: the
 same code is rendered once.
+
+| Op | Arguments | Keys |
+|---|---|---|
+Things can sit on a figure in its data coordinates, as on VCL axes: `pt
+0,0 on=p label="rest"`, `arrow 1,2 0,0 on=p`, and the teacher can point there:
+`point 0,0 on=p`. The coordinates are those of the figure's first axes (with
+subplots, the first one created); log axes are followed. They appear once the
+figure has rendered.
 
 | Op | Arguments | Keys |
 |---|---|---|

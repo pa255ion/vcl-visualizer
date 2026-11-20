@@ -16,6 +16,9 @@ plt.title("Phase portrait")
 plt.legend()
 END
 say "Each curve spirals in toward rest: friction takes a little energy every swing."
+r: pt 0,0 on=p color=yellow size=0.18 label="rest"
+point 0,0 on=p
+say "They all end here, hanging straight down and still."
 s: fig 4.4,-0.4 octave size=8.4 <<END
 fs = 800; t = 0:1/fs:2;
 x = cos(2*pi*(20*t + 70*t.^2));   % a chirp: 20 Hz rising to 300 Hz

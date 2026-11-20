@@ -482,7 +482,42 @@ namespace Vcl
 
         /// <summary>A figure drawn by code on the server (`fig`): its PNG (this client
         /// draws only a subset of SVG; matplotlib's needs more).</summary>
-        void BuildFig(Entity e, Cmd c) => ShowImage(e, c, $"figs/{c.Str("key")}.png", c.Flt("size", 8), "fig");
+        void BuildFig(Entity e, Cmd c)
+        {
+            float w = c.Flt("size", 8);
+            ShowImage(e, c, $"figs/{c.Str("key")}.png", w, "fig");
+            // Where its (first) axes are, so things can sit on it (`on=f`) in its data coordinates.
+            LoadBytes?.Invoke($"figs/{c.Str("key")}.json", bytes =>
+            {
+                if (bytes == null || !e.Obj) return;
+                try
+                {
+                    var meta = (Dictionary<string, object>)Json.Parse(System.Text.Encoding.UTF8.GetString(bytes));
+                    var axes = (List<object>)meta["axes"];
+                    if (axes.Count == 0) return;
+                    var A = (Dictionary<string, object>)axes[0];
+                    var size = (List<object>)meta["size"];
+                    float h = w * (float)((double)size[1] / (double)size[0]);
+                    double[] D(string k) => ((List<object>)A[k]).Select(o => (double)o).ToArray();
+                    var box = D("box");
+                    double[] xr = D("x"), yr = D("y");
+                    bool xlog = A.TryGetValue("xlog", out var xl) && xl is bool xb && xb, ylog = A.TryGetValue("ylog", out var yl) && yl is bool yb && yb;
+                    float F(double v, double[] r, bool log) => (float)(log ? (Math.Log10(v) - Math.Log10(r[0])) / (Math.Log10(r[1]) - Math.Log10(r[0])) : (v - r[0]) / (r[1] - r[0]));
+                    e.AxesSelf = new AxesInfo
+                    {
+                        Is3 = false, X = xr, Y = yr, Z = new double[] { 0, 1 },
+                        Map = v => new Vector3(
+                            -w / 2 + (float)(box[0] + F(v.x, xr, xlog) * (box[2] - box[0])) * w,
+                            -h / 2 + (float)(box[1] + F(v.y, yr, ylog) * (box[3] - box[1])) * h,
+                            -0.02f - v.z),
+                    };
+                    var waiting = e.Waiting;
+                    e.Waiting = null;
+                    if (waiting != null) foreach (var run in waiting) run();
+                }
+                catch (Exception ex) { Log("warning", $"line {c.Line}: fig: where its axes are: {ex.Message}"); }
+            });
+        }
 
         void ShowImage(Entity e, Cmd c, string url, float w, string op)
         {

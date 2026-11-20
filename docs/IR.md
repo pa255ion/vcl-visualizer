@@ -171,6 +171,13 @@ image. The JSON gives each axes' box in the figure (fractions from the bottom
 left), its `x`/`y` limits and log flags. A figure whose code fails still gets
 an image (the error), and the server sends a diagnostic for the line.
 
+`on` may name a `fig`: the entity's points are then in the data coordinates of
+the figure's first axes (`axes[0]` of the JSON): x maps to
+`-w/2 + (box[0] + (x-x0)/(x1-x0)·(box[2]-box[0]))·w` across the image of width
+`w` (`size`) and height `w·size[1]/size[0]`, likewise y; log axes map log10.
+Until the JSON has loaded, such entities wait (then appear finished). `point`
+also takes `on` (axes or a fig), with `at` in its data coordinates.
+
 `data` has no IR: the parser runs its code (through the server, or results
 computed ahead of time as `figs/<key>.data.json` for a static copy, where the
 key hashes `data:`, the language and the code) and fills `{name.var}` in the

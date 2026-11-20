@@ -509,23 +509,34 @@ export class Runtime {
 
   create(cmd) {
     let e;
+    const build = (parentEnt) => {
+      e = new Entity(this, cmd, parentEnt);
+      try {
+        BUILD[cmd.op].call(this, e, cmd);
+      } catch (err) {
+        e.dispose();
+        throw err;
+      }
+      this.entities.set(cmd.id, e);
+    };
     return {
       begin: () => {
         this.remove(cmd.id);
         let parentEnt = null;
         if (cmd.on) parentEnt = this.get(cmd.on);
-        e = new Entity(this, cmd, parentEnt);
-        try {
-          BUILD[cmd.op].call(this, e, cmd);
-        } catch (err) {
-          e.dispose();
-          throw err;
+        // On a figure from code whose axes aren't known yet (still rendering): when they are.
+        if (parentEnt?.op === 'fig' && !parentEnt.axes) {
+          (parentEnt.waiting ??= []).push(() => {
+            if (this.entities.get(cmd.on) !== parentEnt) return; // it went meanwhile
+            try { build(parentEnt); e.enter(1, 1); } catch (err) { this.log('error', `line ${cmd.line}: ${cmd.op}: ${err.message}`); }
+          });
+          return;
         }
-        this.entities.set(cmd.id, e);
+        build(parentEnt);
         e.enter(0, 0);
       },
-      update: (eased, raw) => e.enter(eased, raw),
-      finish: () => e.enter(1, 1),
+      update: (eased, raw) => e?.enter(eased, raw),
+      finish: () => e?.enter(1, 1),
     };
   }
 
@@ -554,7 +565,16 @@ for (const op of QUESTIONS) {
 H.say = function (c) {
   return { begin: () => { this.avatar?.say(c.text, c.dur / this.speed); this.voice?.play(c); } };
 };
-H.point = function (c) { return { begin: () => this.avatar?.point(c.at ? this.pointWorld(c.at) : null, c.dur) }; };
+H.point = function (c) {
+  return {
+    begin: () => {
+      let at = c.at ? this.pointWorld(c.at) : null;
+      const on = c.on && this.get(c.on); // a point in axes' or a figure's data coordinates
+      if (on && c.at && !isRef(c.at)) at = on.obj.localToWorld(on.axes ? on.axes.map(V(c.at)) : new THREE.Vector3());
+      this.avatar?.point(at, c.dur);
+    },
+  };
+};
 H.title = function (c) { return this.create({ ...c, id: '__title', op: 'title' }); };
 H.board = function (c) {
   const t = this.board ? this.board.tween(c.size ?? null) : {};
@@ -1637,7 +1657,25 @@ BUILD.svg = function (e, c) {
 
 /** A figure drawn by code on the server (or pre-rendered for a static copy): its SVG. */
 BUILD.fig = function (e, c) {
-  BUILD.svg(e, { ...c, size: c.size ?? 8, src: `${e.rt.figBase}${c.key}.svg` });
+  const width = c.size ?? 8;
+  BUILD.svg(e, { ...c, size: width, src: `${e.rt.figBase}${c.key}.svg` });
+  // Where its (first) axes are, so things can sit on it (`on=f`) in its data coordinates.
+  (async () => {
+    const res = await fetch(`${e.rt.figBase}${c.key}.json`);
+    if (!res.ok) return;
+    const meta = await res.json();
+    const A = meta.axes?.[0];
+    if (!A) return;
+    const w = width, h = (width * meta.size[1]) / meta.size[0];
+    const f = (v, [lo, hi], log) => (log ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : (v - lo) / (hi - lo));
+    const map = (v) => new THREE.Vector3(
+      -w / 2 + (A.box[0] + f(v.x, A.x, A.xlog) * (A.box[2] - A.box[0])) * w,
+      -h / 2 + (A.box[1] + f(v.y, A.y, A.ylog) * (A.box[3] - A.box[1])) * h,
+      0.02 + v.z);
+    e.axes = { is3: false, x: A.x, y: A.y, map, plots: 0 };
+    for (const run of e.waiting ?? []) run();
+    e.waiting = null;
+  })().catch((err) => e.rt.log('warning', `line ${c.line}: fig: where its axes are: ${err.message}`));
 };
 
 addCharts(BUILD, { FG, PALETTE, axesOf, labelFor });

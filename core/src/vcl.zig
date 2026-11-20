@@ -103,9 +103,11 @@ fn W(name: []const u8, words: []const []const u8) Param {
 const ease_words = &[_][]const u8{ "linear", "in", "out", "inout" };
 const fx_words = &[_][]const u8{ "draw", "fade", "grow", "pop", "none" };
 const timing_keys = [_]Param{ P("dur", .num), W("ease", ease_words) };
+/// `on=` axes (data coordinates), or a `fig` (its first axes' data coordinates).
+const on_key: Param = .{ .name = "on", .ty = .id, .of_op = "axes" };
 const draw_keys = [_]Param{
     P("color", .color), P("opacity", .num), W("fx", fx_words), P("label", .str),
-    .{ .name = "on", .ty = .id, .of_op = "axes" },
+    on_key,
 };
 
 const width = P("width", .num);
@@ -137,7 +139,7 @@ pub const ops = [_]Op{
     // flow & talk
     .{ .name = "wait", .kind = .flow, .pos = &.{P("secs", .num)}, .dur = 0, .replay = false },
     .{ .name = "say", .kind = .flow, .pos = &.{P("text", .str)}, .dur = 0, .replay = false },
-    .{ .name = "point", .kind = .flow, .pos = &.{.{ .name = "at", .ty = .point, .opt = true }}, .dur = 0.4, .replay = false },
+    .{ .name = "point", .kind = .flow, .pos = &.{.{ .name = "at", .ty = .point, .opt = true }}, .keys = &.{on_key}, .dur = 0.4, .replay = false },
     .{ .name = "title", .kind = .flow, .pos = &.{P("text", .str)}, .dur = 0.5 },
     .{ .name = "clear", .kind = .flow, .dur = 0.5 },
     .{ .name = "board", .kind = .flow, .pos = &.{.{ .name = "size", .ty = .vec, .opt = true }}, .dur = 0.8 },
@@ -1030,8 +1032,11 @@ const LineParser = struct {
                 };
                 if (!isIdent(text)) return p.fail("{s}: expected a name for '{s}', got '{s}'", .{ op, param.name, text });
                 const e = try p.lookup(text);
-                if (param.of_op) |want| if (!std.mem.eql(u8, e.op, want))
-                    return p.fail("{s}: '{s}' is a {s}, not {s}", .{ op, text, e.op, want });
+                if (param.of_op) |want| if (!std.mem.eql(u8, e.op, want)) {
+                    // Things can sit on a figure from code too: in its axes' data coordinates.
+                    const on_fig = std.mem.eql(u8, param.name, "on") and std.mem.eql(u8, e.op, "fig");
+                    if (!on_fig) return p.fail("{s}: '{s}' is a {s}, not {s}{s}", .{ op, text, e.op, want, if (std.mem.eql(u8, param.name, "on")) " or fig" else "" });
+                };
                 return .{ .id = text };
             },
             .point => {
@@ -2920,6 +2925,25 @@ test "data: computed values fill {d.x} in later lines and prose" {
     try testing.expect(std.mem.indexOf(u8, got, "data: ZeroDivisionError: division by zero (code line 1)") != null);
     try testing.expect(std.mem.indexOf(u8, got, "The peak is 3.14159, over 4 points.") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\"op\":\"data\"") == null);
+}
+
+test "on=FIG: data coordinates of a figure from code" {
+    try expectOut(
+        \\f: fig 0,0 python "plt.plot([0, 1], [0, 1])"
+        \\pt 0.5,0.5 on=f
+        \\point 1,1 on=f
+        \\t: text 0,0 "x"
+        \\pt 0,0 on=t
+    ,
+        \\{"op":"fig","id":"f","line":1,"par":false,"dur":0.8,"at":[0,0,0],"lang":"python","code":"plt.plot([0, 1], [0, 1])","key":"
+    ++ &figKey("python", "plt.plot([0, 1], [0, 1])") ++
+        \\"}
+        \\{"op":"pt","id":"_1","line":2,"par":false,"dur":0.3,"at":[0.5,0.5,0],"on":"f"}
+        \\{"op":"point","line":3,"par":false,"dur":0.4,"at":[1,1,0],"on":"f"}
+        \\{"op":"text","id":"t","line":4,"par":false,"dur":0.5,"at":[0,0,0],"text":"x"}
+        \\{"op":"diag","level":"error","line":5,"msg":"pt: 't' is a text, not axes or fig"}
+        \\
+    );
 }
 
 test "data: without anything to run the code, an error" {

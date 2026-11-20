@@ -70,6 +70,7 @@ from scipy.integrate import solve_ivp  imported. No plt.show(). 8×5 in, styled 
 …                                      Octave too: `fig P octave <<END … END` (base Octave)
 END
 ```
+Mark or point into a figure in its data coordinates: `pt 0,0 on=p label="rest"`, `arrow 1,2 0,0 on=p`, `point 0,0 on=p` (its first axes).
 Numbers only, drawn by VCL's own ops (they animate): `d: data python <<END … END` runs the code; later lines use its variables as `{d.var}` (lists → `1 2 3`, rows → `x,y x,y`, numbers → 6 digits; round for speech):
 ```
 d: data python <<END
