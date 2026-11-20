@@ -54,6 +54,7 @@ namespace Vcl
                 case "band": BuildBand(e, c); break;
                 case "contour": BuildContour(e, c); break;
                 case "svg": BuildSvg(e, c); break;
+                case "fig": BuildFig(e, c); break;
                 case "model": BuildModel(e, c); break;
                 default: BuildPlaceholder(e, c); break;
             }

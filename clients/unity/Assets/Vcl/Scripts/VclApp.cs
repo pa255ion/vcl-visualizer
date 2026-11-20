@@ -416,7 +416,7 @@ namespace Vcl
         // ── scene sounds ──
 
         static readonly HashSet<string> Pops = new HashSet<string> { "pt", "node", "box", "sphere", "cyl", "model" };
-        static readonly HashSet<string> Fades = new HashSet<string> { "text", "tex", "title", "img", "svg", "code", "table", "grid", "bits", "band" };
+        static readonly HashSet<string> Fades = new HashSet<string> { "text", "tex", "title", "img", "svg", "fig", "code", "table", "grid", "bits", "band" };
         static readonly HashSet<string> Draws = new HashSet<string> { "line", "arrow", "path", "poly", "rect", "circle", "angle", "edge", "axes", "plot", "surf",
             "part", "wire", "block", "frame", "wave", "nn", "bars", "hist", "scatter", "errbar", "contour" };
         float lastSound;

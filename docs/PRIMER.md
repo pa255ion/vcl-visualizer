@@ -63,6 +63,15 @@ set c focus=5       move the highlighted lines/rows        arrow note.left c.L5 
 ```
 Leave about 1 unit around parts for labels. A `block` warning means it's too small for its title and ports; enlarge it. A "runs off the board" or "overlaps" warning means move, shorten or shrink it.
 
+**Figures from code** (computed results and specialist plots; the server renders them)
+```
+p: fig P python size=9 <<END          np and plt are imported; scipy, sympy, networkx can be
+from scipy.integrate import solve_ivp  imported. No plt.show(). 8×5 in, styled for the board.
+…                                      Octave too: `fig P octave <<END … END` (base Octave)
+END
+```
+Prefer VCL's own ops when they can show it (they animate and can be pointed at); use `fig` for ODE solutions, FFTs, fits, simulations, phase portraits, spectrograms, network layouts. No network or files; 30 s of CPU. If it fails you get `line N: error: fig: … (code line K)`.
+
 **Questions for the learner** (the lesson waits for the answer; you get it back as `[answer] …`)
 ```
 quiz "Question?" "option 1" "option 2" "option 3" answer=2 explain="Why."     answer=1,3 if several are right; options are shuffled, so explain without letters

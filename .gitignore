@@ -10,3 +10,4 @@ zig-pkg/
 
 # Teacher avatars (VRM) you add to the assets folder: often licensed per person, so not committed.
 viewer/assets/*.vrm
+viewer/figs/

@@ -4,6 +4,7 @@
 # The copy is marked static (<html data-static>): it never looks for a
 # `vcl serve` and parses lessons with the bundled wasm. The commit hash is
 # stamped into every module import and data URL, so caches never mix versions.
+# Lessons' figures from code are rendered into figs/ (inside `nix develop`).
 # Then commit and push the site and upload it with the site's ./deploy.sh.
 set -eu
 site=${1:?usage: tools/publish.sh SITE_DIR [SUBDIR]}
@@ -24,6 +25,12 @@ cp viewer/js/*.js "$dest/js/"
 for d in lessons licenses assets; do
   git ls-files -z "viewer/$d" | xargs -0 -I{} cp {} "$dest/$d/"
 done
+
+# Figures from code (`fig`): rendered now, since the static copy has no server.
+# Needs the dev shell's Python/Octave and bubblewrap (run inside `nix develop`).
+git ls-files -z 'viewer/lessons/*.vcl' 'viewer/lessons/*.md' | xargs -0 zig-out/bin/vcl figs --out "$dest/figs" ||
+  { echo "publish: some figures failed (above)" >&2; exit 1; }
+rm -f "$dest"/figs/*.err
 
 v="?v=$version"
 sed -i -e 's|<html lang="en">|<html lang="en" data-static>|' \

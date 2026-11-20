@@ -478,19 +478,25 @@ namespace Vcl
 
         // ── img: a picture from the server ──
 
-        void BuildImg(Entity e, Cmd c)
+        void BuildImg(Entity e, Cmd c) => ShowImage(e, c, c.Str("url"), c.Flt("size", 4), "img");
+
+        /// <summary>A figure drawn by code on the server (`fig`): its PNG (this client
+        /// draws only a subset of SVG; matplotlib's needs more).</summary>
+        void BuildFig(Entity e, Cmd c) => ShowImage(e, c, $"figs/{c.Str("key")}.png", c.Flt("size", 8), "fig");
+
+        void ShowImage(Entity e, Cmd c, string url, float w, string op)
         {
             e.Obj.localPosition = e.ToParent(c["at"]);
-            float w = c.Flt("size", 4);
             var mat = e.Track(Draw.Unlit(Color.white, 3001), "solid");
             var q = Draw.QuadObj(e.Body, mat, 1);
             q.localScale = new Vector3(w, w * 0.6f, 1);
-            var url = c.Str("url");
-            if (LoadTexture == null) { Log("warning", $"line {c.Line}: img: no image loader"); return; }
+            if (op == "fig") q.gameObject.SetActive(false); // nothing to show until it has rendered
+            if (LoadTexture == null) { Log("warning", $"line {c.Line}: {op}: no image loader"); return; }
             LoadTexture(url, tex =>
             {
                 if (!q) return;
-                if (tex == null) { Log("warning", $"line {c.Line}: img: could not load {url}"); return; }
+                if (tex == null) { Log("warning", $"line {c.Line}: {op}: could not load {url}"); return; }
+                q.gameObject.SetActive(true);
                 mat.mainTexture = tex;
                 q.localScale = new Vector3(w, w * tex.height / tex.width, 1);
             });

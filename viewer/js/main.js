@@ -193,6 +193,7 @@ let transport = null;
 const serverUrl = params.get('server') ?? (location.protocol.startsWith('http') ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws` : null);
 const isStatic = document.documentElement.hasAttribute('data-static');
 if (serverUrl && !params.has('offline') && !isStatic) {
+  runtime.figBase = `${serverUrl.replace(/^ws/, 'http').replace(/\/ws$/, '')}/figs/`;
   transport = new Transport({
     url: serverUrl,
     onCmd,
@@ -442,7 +443,7 @@ runtime.onBegin = (t) => {
 
 // ── scene and sound ──
 const POPS = new Set(['pt', 'node', 'box', 'sphere', 'cyl', 'model']);
-const FADES = new Set(['text', 'tex', 'title', 'img', 'svg', 'code', 'table', 'grid', 'bits', 'band']);
+const FADES = new Set(['text', 'tex', 'title', 'img', 'svg', 'fig', 'code', 'table', 'grid', 'bits', 'band']);
 const DRAWS = new Set(['line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'edge', 'axes', 'plot', 'surf',
   'part', 'wire', 'block', 'frame', 'wave', 'nn', 'bars', 'hist', 'scatter', 'errbar', 'contour']);
 let lastSound = 0;

@@ -159,6 +159,18 @@ value is a parse error). The source string stays; these fields are added:
 
 `band` has no data: its `x`/`y` ranges (either may be missing: the whole axis).
 
+## Figures from code
+
+`fig` carries its `lang` (`python` or `octave`), its `code` and a `key`: a hash
+of the two (with `vcl.fig_version`). The rendered figure is
+`figs/<key>.svg` (vector), `figs/<key>.png` (2× raster, for clients that draw
+only part of SVG) and `figs/<key>.json`, relative to the server (`GET /figs/…`
+waits while it renders) or to a published static copy (pre-rendered by `vcl
+figs`). `size` is the width in board units (default 8); the height follows the
+image. The JSON gives each axes' box in the figure (fractions from the bottom
+left), its `x`/`y` limits and log flags. A figure whose code fails still gets
+an image (the error), and the server sends a diagnostic for the line.
+
 ## Parts
 
 `hl`, `color` and `fade` may target one part of a diagram instead of a whole

@@ -36,15 +36,27 @@
           VCL_ANDROID_NDK = "${sdk}/ndk/23.1.7779620";
           VCL_JDK = "${pkgs.jdk11}/lib/openjdk";
         };
+
+      # Figures from code (`fig python|octave`), rendered by `vcl serve` and
+      # `vcl figs` in a bubblewrap sandbox (core/src/fig.zig).
+      figPython = pkgs: pkgs.python3.withPackages (p: [ p.numpy p.scipy p.matplotlib p.sympy p.networkx ]);
     in {
       devShells = forAll (system: pkgs: {
-        default = pkgs.mkShell {
+        default = pkgs.mkShell ({
           packages = [
             pkgs.zig_0_16   # parser, CLI, stream server, wasm build
             pkgs.nodejs     # viewer unit tests (node --test)
             pkgs.android-tools # adb reverse for Quest over USB
-          ];
-        };
+            (figPython pkgs)
+            pkgs.octave
+            pkgs.gnuplot
+            pkgs.librsvg    # rsvg-convert: Octave figures to PNG
+          ] ++ pkgs.lib.optional pkgs.stdenv.isLinux pkgs.bubblewrap;
+          VCL_PYTHON = "${figPython pkgs}/bin/python3";
+          VCL_OCTAVE = "${pkgs.octave}/bin/octave-cli";
+          VCL_GNUPLOT = "${pkgs.gnuplot}/bin";
+          VCL_RSVG = "${pkgs.librsvg}/bin";
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { VCL_BWRAP = "${pkgs.bubblewrap}/bin/bwrap"; });
       } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
         unity = unityShell system;
       });

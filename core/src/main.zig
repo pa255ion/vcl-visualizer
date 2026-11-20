@@ -3,6 +3,8 @@
 //!   vcl check [--mixed] FILE...  report diagnostics (exit 1 on errors); .md is mixed; - is stdin
 //!   vcl compile [--mixed] FILE   print the JSON IR, one command per line (- is stdin)
 //!   vcl serve [--port N] [--host H] [--root DIR] [--assets DIR] [--lessons DIR]
+//!             [--no-figs] [--unsafe-figs]
+//!   vcl figs [--out DIR] [--unsafe-figs] FILE...   render the lessons' `fig`s
 //!
 //! The server:
 //!   GET  /            the viewer (static files from --root, default "viewer")
@@ -19,6 +21,8 @@
 //!   POST /status      tutor state ("thinking"/"idle") → {"op":"status","text":…}
 //!   POST /answer      a learner's answer to a question, a JSON object →
 //!                     broadcast as {"op":"answer",…} (not replayed)
+//!   GET  /figs/KEY.svg|png|json   a `fig` rendered from its code (fig.zig):
+//!                     waits while it renders; else ROOT/figs/ (pre-rendered)
 //!   GET  /quest/status, POST /quest/connect|start|disconnect
 //!                     connect a Quest headset through adb (the Headset page,
 //!                     /quest.html); only from this machine
@@ -27,6 +31,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vcl = @import("vcl");
 const quest = @import("quest.zig");
+const fig = @import("fig.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const WebSocket = std.http.Server.WebSocket;
@@ -36,6 +41,8 @@ const usage =
     \\  vcl check [--mixed] FILE...    report diagnostics (.md files are mixed; - reads stdin)
     \\  vcl compile [--mixed] FILE     print JSON IR (one command per line; - reads stdin)
     \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer] [--assets DIR] [--lessons DIR]
+    \\            [--no-figs] [--unsafe-figs]
+    \\  vcl figs [--out DIR] [--unsafe-figs] FILE...   render the figures (`fig`) of lessons
     \\
 ;
 
@@ -62,7 +69,11 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "compile")) {
         try compile(io, gpa, rest, out);
     } else if (std.mem.eql(u8, cmd, "serve")) {
-        try serve(io, gpa, rest);
+        try serve(io, gpa, init.arena.allocator(), rest, init.environ_map);
+    } else if (std.mem.eql(u8, cmd, "figs")) {
+        const failed = try figsCmd(io, gpa, init.arena.allocator(), rest, init.environ_map, out);
+        try out.flush();
+        if (failed > 0) std.process.exit(1);
     } else {
         try out.writeAll(usage);
         try out.flush();
@@ -177,6 +188,12 @@ const Hub = struct {
     /// The headset's last Wi-Fi address, to reconnect without the cable.
     quest_ip: [15]u8 = undefined,
     quest_ip_len: usize = 0,
+    /// Figures from code (null: --no-figs). Renders run in `fig_group`;
+    /// `fig_pending` holds the keys being rendered (under `fig_mutex`).
+    figs: ?fig.Config = null,
+    fig_mutex: Io.Mutex = .init,
+    fig_pending: std.StringHashMapUnmanaged(void) = .empty,
+    fig_group: Io.Group = .init,
 
     fn lock(h: *Hub) void {
         h.mutex.lockUncancelable(h.io);
@@ -203,6 +220,7 @@ const Hub = struct {
             } else {
                 if (report) |r| r.cmds += 1;
                 try h.record(line);
+                if (std.mem.eql(u8, opName(line), "fig")) h.startFig(line);
             }
             h.broadcast(line);
         }
@@ -223,6 +241,82 @@ const Hub = struct {
         const op = vcl.findOp(name) orelse return;
         if (!op.replay) return;
         try h.log.append(h.gpa, try h.gpa.dupe(u8, line));
+    }
+
+    /// Start rendering a `fig` in the background (unless it is cached or
+    /// already rendering). A failure is reported as a diagnostic on its line,
+    /// so the tutor sees it. Caller holds the lock.
+    fn startFig(h: *Hub, line: []const u8) void {
+        const cfg = h.figs orelse return;
+        const f = parseFig(h.gpa, line) orelse return;
+        if (fig.cached(h.io, cfg, f.value.key)) {
+            defer f.deinit();
+            if (fig.cachedError(h.gpa, h.io, cfg, f.value.key)) |msg| {
+                defer h.gpa.free(msg);
+                h.figDiag(f.value.line, msg);
+            }
+            return;
+        }
+        h.fig_mutex.lockUncancelable(h.io);
+        const busy = h.fig_pending.contains(f.value.key);
+        if (!busy) h.fig_pending.put(h.gpa, h.gpa.dupe(u8, f.value.key) catch {
+            h.fig_mutex.unlock(h.io);
+            f.deinit();
+            return;
+        }, {}) catch {};
+        h.fig_mutex.unlock(h.io);
+        if (busy) {
+            f.deinit();
+            return;
+        }
+        h.fig_group.concurrent(h.io, figJob, .{ h, f }) catch {
+            h.figDone(f.value.key);
+            f.deinit();
+        };
+    }
+
+    fn figJob(h: *Hub, f: std.json.Parsed(FigLine)) Io.Cancelable!void {
+        defer f.deinit();
+        defer h.figDone(f.value.key);
+        const outcome = fig.render(h.gpa, h.io, h.figs.?, f.value.lang, f.value.code, f.value.key) catch |err| {
+            std.log.warn("fig line {d}: {s}", .{ f.value.line, @errorName(err) });
+            return;
+        };
+        switch (outcome) {
+            .ok => std.log.info("fig line {d}: rendered {s}", .{ f.value.line, f.value.key }),
+            .failed => |e| {
+                defer h.gpa.free(e.msg);
+                std.log.warn("fig line {d}: {s}", .{ f.value.line, e.msg });
+                h.lock();
+                defer h.unlock();
+                h.figDiag(f.value.line, e.msg);
+            },
+        }
+    }
+
+    fn figDone(h: *Hub, key: []const u8) void {
+        h.fig_mutex.lockUncancelable(h.io);
+        defer h.fig_mutex.unlock(h.io);
+        if (h.fig_pending.fetchRemove(key)) |kv| h.gpa.free(kv.key);
+    }
+
+    fn figPending(h: *Hub, key: []const u8) bool {
+        h.fig_mutex.lockUncancelable(h.io);
+        defer h.fig_mutex.unlock(h.io);
+        return h.fig_pending.contains(key);
+    }
+
+    /// `fig: <msg>` as an error on the figure's line, to everyone. Caller holds the lock.
+    fn figDiag(h: *Hub, line_no: u32, msg: []const u8) void {
+        var aw: Io.Writer.Allocating = .init(h.gpa);
+        defer aw.deinit();
+        const w = &aw.writer;
+        w.print("{{\"op\":\"diag\",\"level\":\"error\",\"line\":{d},\"msg\":", .{line_no}) catch return;
+        const text = std.fmt.allocPrint(h.gpa, "fig: {s}", .{msg}) catch return;
+        defer h.gpa.free(text);
+        vcl.writeJsonString(w, text) catch return;
+        w.writeAll("}") catch return;
+        h.broadcast(aw.written());
     }
 
     fn broadcast(h: *Hub, line: []const u8) void {
@@ -274,15 +368,75 @@ const Report = struct {
     }
 };
 
-fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
+/// `vcl figs`: render every `fig` of some lessons (for a static copy, or to warm the cache).
+fn figsCmd(io: Io, gpa: Allocator, arena: Allocator, args: []const [:0]const u8, env: *const std.process.Environ.Map, out: *Io.Writer) !usize {
+    var cfg = try fig.configure(arena, io, env);
+    var files: std.ArrayList([]const u8) = .empty;
+    defer files.deinit(gpa);
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.eql(u8, a, "--out")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgumentValue;
+            try Io.Dir.cwd().createDirPath(io, args[i]);
+            cfg.cache = try Io.Dir.cwd().realPathFileAlloc(io, args[i], arena);
+        } else if (std.mem.eql(u8, a, "--unsafe-figs")) {
+            cfg.unsafe = true;
+        } else try files.append(gpa, a);
+    }
+    var failed: usize = 0;
+    var count: usize = 0;
+    for (files.items) |path| {
+        const src = try readSource(io, gpa, path);
+        defer gpa.free(src);
+        const mode: vcl.Mode = if (std.mem.endsWith(u8, path, ".md")) .mixed else .vcl;
+        const ir = try runSource(gpa, src, mode);
+        defer gpa.free(ir);
+        var it = std.mem.splitScalar(u8, ir, '\n');
+        while (it.next()) |line| {
+            if (!std.mem.eql(u8, opName(line), "fig")) continue;
+            const f = parseFig(gpa, line) orelse continue;
+            defer f.deinit();
+            count += 1;
+            switch (try fig.render(gpa, io, cfg, f.value.lang, f.value.code, f.value.key)) {
+                .ok => try out.print("{s}:{d}: {s} ok\n", .{ path, f.value.line, f.value.key }),
+                .failed => |e| {
+                    defer gpa.free(e.msg);
+                    failed += 1;
+                    try out.print("{s}:{d}: fig: {s}\n", .{ path, f.value.line, e.msg });
+                },
+            }
+        }
+    }
+    try out.print("{d} figure(s), {d} failed, in {s}\n", .{ count, failed, cfg.cache });
+    return failed;
+}
+
+const FigLine = struct { key: []const u8, lang: []const u8, code: []const u8, line: u32 = 0 };
+fn parseFig(gpa: Allocator, line: []const u8) ?std.json.Parsed(FigLine) {
+    return std.json.parseFromSlice(FigLine, gpa, line, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch null;
+}
+
+fn serve(io: Io, gpa: Allocator, arena: Allocator, args: []const [:0]const u8, env: *const std.process.Environ.Map) !void {
     var port: u16 = 8080;
     var host: []const u8 = "127.0.0.1";
     var root_path: []const u8 = "viewer";
     var assets_path: ?[]const u8 = null;
     var lessons_path: ?[]const u8 = null;
+    var figs_on = true;
+    var unsafe_figs = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
+        if (std.mem.eql(u8, a, "--no-figs")) {
+            figs_on = false;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--unsafe-figs")) {
+            unsafe_figs = true;
+            continue;
+        }
         if (i + 1 >= args.len) return error.MissingArgumentValue;
         if (std.mem.eql(u8, a, "--port")) {
             port = try std.fmt.parseInt(u16, args[i + 1], 10);
@@ -312,8 +466,19 @@ fn serve(io: Io, gpa: Allocator, args: []const [:0]const u8) !void {
     defer if (library) |*d| d.close(io);
     if (lessons_path) |lp| std.log.info("lessons: {s}/ at /library/", .{lp});
 
-    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .library = library, .scene = vcl.Scene.init(gpa), .port = port };
+    var figs: ?fig.Config = null;
+    if (figs_on) {
+        var cfg = try fig.configure(arena, io, env);
+        cfg.unsafe = unsafe_figs;
+        std.log.info("figures: python {s}, octave {s}, sandbox {s}; cache {s}", .{
+            cfg.python orelse "(none)", cfg.octave orelse "(none)",
+            if (cfg.unsafe) "OFF (--unsafe-figs)" else cfg.bwrap orelse "(no bwrap: figures won't render)", cfg.cache,
+        });
+        figs = cfg;
+    }
+    var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .library = library, .scene = vcl.Scene.init(gpa), .port = port, .figs = figs };
     defer hub.scene.deinit();
+    defer hub.fig_group.cancel(io);
 
     const addr = try Io.net.IpAddress.parse(host, port);
     var server = listenExclusive(io, addr) catch |err| {
@@ -544,6 +709,8 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         return true;
     }
 
+    if (std.mem.startsWith(u8, path, "/figs/")) return figRoute(hub, req, path["/figs/".len..]);
+
     if (std.mem.eql(u8, path, "/assets/index.json")) {
         const listing = try assetIndex(hub);
         defer gpa.free(listing);
@@ -588,6 +755,52 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
         .{ .name = "content-type", .value = mimeType(rel) },
         .{ .name = "cache-control", .value = "no-cache" },
     } });
+    return true;
+}
+
+/// GET /figs/KEY.svg|png|json: from the render cache (waiting while it
+/// renders), else pre-rendered under ROOT/figs/.
+fn figRoute(hub: *Hub, req: *std.http.Server.Request, name: []const u8) !bool {
+    const gpa = hub.gpa;
+    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse name.len;
+    const key = name[0..dot];
+    const ext = name[dot..];
+    const known = std.mem.eql(u8, ext, ".svg") or std.mem.eql(u8, ext, ".png") or std.mem.eql(u8, ext, ".json");
+    if (!fig.isKey(key) or !known) {
+        try req.respond("bad figure name\n", .{ .status = .bad_request });
+        return true;
+    }
+    const headers: []const std.http.Header = &.{
+        .{ .name = "content-type", .value = mimeType(name) },
+        .{ .name = "cache-control", .value = "max-age=86400" },
+        .{ .name = "access-control-allow-origin", .value = "*" },
+    };
+    var waited: u32 = 0;
+    while (true) : (waited += 1) {
+        if (hub.figs) |cfg| {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const p = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ cfg.cache, name });
+            if (Io.Dir.cwd().readFileAlloc(hub.io, p, gpa, .limited(64 << 20))) |data| {
+                defer gpa.free(data);
+                try req.respond(data, .{ .extra_headers = headers });
+                return true;
+            } else |_| {}
+            // Still rendering: wait (up to a minute and a half).
+            if (waited < 600 and hub.figPending(key)) {
+                hub.io.sleep(.fromMilliseconds(150), .awake) catch return false;
+                continue;
+            }
+        }
+        break;
+    }
+    var rel_buf: [64]u8 = undefined;
+    const rel = try std.fmt.bufPrint(&rel_buf, "figs/{s}", .{name});
+    const data = hub.root.readFileAlloc(hub.io, rel, gpa, .limited(64 << 20)) catch {
+        try req.respond("figure not rendered (see the diagnostics for its line)\n", .{ .status = .not_found, .extra_headers = &.{.{ .name = "access-control-allow-origin", .value = "*" }} });
+        return true;
+    };
+    defer gpa.free(data);
+    try req.respond(data, .{ .extra_headers = headers });
     return true;
 }
 

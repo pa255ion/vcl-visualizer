@@ -198,7 +198,7 @@ namespace Vcl
         public static readonly Dictionary<string, string> DefaultFx = new Dictionary<string, string>
         {
             ["pt"] = "pop", ["text"] = "fade", ["tex"] = "fade", ["title"] = "fade", ["node"] = "pop", ["img"] = "fade",
-            ["svg"] = "fade", ["code"] = "fade", ["table"] = "fade", ["grid"] = "fade", ["bits"] = "fade", ["band"] = "fade",
+            ["svg"] = "fade", ["fig"] = "fade", ["code"] = "fade", ["table"] = "fade", ["grid"] = "fade", ["bits"] = "fade", ["band"] = "fade",
             ["box"] = "grow", ["sphere"] = "grow", ["cyl"] = "grow", ["model"] = "grow",
         };
         public static readonly HashSet<string> Drawable = new HashSet<string>
@@ -710,7 +710,7 @@ namespace Vcl
         static readonly HashSet<string> CreateOps = new HashSet<string>
         {
             "pt", "line", "arrow", "path", "poly", "rect", "circle", "angle", "text", "tex", "node", "edge", "img",
-            "axes", "plot", "surf", "box", "sphere", "cyl", "model", "svg", "part", "wire", "block", "frame", "code", "table", "wave",
+            "axes", "plot", "surf", "box", "sphere", "cyl", "model", "svg", "fig", "part", "wire", "block", "frame", "code", "table", "wave",
             "nn", "grid", "bits", "bars", "hist", "scatter", "errbar", "band", "contour",
         };
 

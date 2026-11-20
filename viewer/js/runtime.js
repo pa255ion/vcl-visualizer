@@ -20,7 +20,7 @@ import { QuestionCard } from './questions.js';
 export const FG = '#e8edf3';
 const PALETTE = ['#42a5f5', '#ffa726', '#66bb6a', '#f06292', '#ab47bc', '#26a69a', '#ffee58'];
 const DEFAULT_FX = {
-  pt: 'pop', text: 'fade', tex: 'fade', title: 'fade', node: 'pop', img: 'fade', svg: 'fade',
+  pt: 'pop', text: 'fade', tex: 'fade', title: 'fade', node: 'pop', img: 'fade', svg: 'fade', fig: 'fade',
   code: 'fade', table: 'fade', grid: 'fade', bits: 'fade', band: 'fade',
   box: 'grow', sphere: 'grow', cyl: 'grow', model: 'grow',
 };
@@ -162,6 +162,7 @@ export class Runtime {
     this.voice = voice;
     this.log = log;
     this.entities = new Map();
+    this.figBase = 'figs/'; // where rendered figures (`fig`) are: the server's /figs/, or the static copy's
     this.timeline = new Timeline((e, t) => this.log('error', `line ${t.cmd?.line ?? '?'}: ${t.cmd?.op}: ${e.message}`));
     this.timeline.onBegin = (t) => {
       if (t.startsStep) { this.step = t.step; this.stepAt = this.now(); }
@@ -688,7 +689,7 @@ H.spin = function (c) {
 };
 
 for (const op of ['pt', 'line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'text', 'tex', 'node', 'edge', 'img',
-  'axes', 'plot', 'surf', 'box', 'sphere', 'cyl', 'model', 'svg', 'part', 'wire', 'block', 'frame', 'code', 'table', 'wave',
+  'axes', 'plot', 'surf', 'box', 'sphere', 'cyl', 'model', 'svg', 'fig', 'part', 'wire', 'block', 'frame', 'code', 'table', 'wave',
   'nn', 'grid', 'bits', 'bars', 'hist', 'scatter', 'errbar', 'band', 'contour'])
   H[op] = function (c) { return this.create(c); };
 
@@ -1599,7 +1600,14 @@ BUILD.svg = function (e, c) {
   e.obj.position.copy(e.toParent(c.at));
   labelFor(e, c, new THREE.Vector3(0, -width / 3, 0));
   (async () => {
-    const markup = c.src.trim().startsWith('<') ? c.src : await (await fetch(c.src)).text();
+    let markup = c.src;
+    if (!markup.trim().startsWith('<')) {
+      const res = await fetch(c.src);
+      markup = await res.text();
+      if (!res.ok && c.op === 'fig') throw new Error(res.status === 404 && !markup.startsWith('figure')
+        ? "not rendered: figures from code need `vcl serve` (a published copy has only its own lessons' figures)" : markup.trim());
+      if (!res.ok) throw new Error(`${c.src}: ${markup.trim().slice(0, 200) || res.status}`);
+    }
     const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
     const svg = doc.documentElement;
     if (svg.nodeName !== 'svg') throw new Error('not an SVG document');
@@ -1624,7 +1632,12 @@ BUILD.svg = function (e, c) {
     } finally {
       URL.revokeObjectURL(url);
     }
-  })().catch((err) => e.rt.log('warning', `line ${c.line}: svg: ${err.message}`));
+  })().catch((err) => e.rt.log('warning', `line ${c.line}: ${c.op}: ${err.message}`));
+};
+
+/** A figure drawn by code on the server (or pre-rendered for a static copy): its SVG. */
+BUILD.fig = function (e, c) {
+  BUILD.svg(e, { ...c, size: c.size ?? 8, src: `${e.rt.figBase}${c.key}.svg` });
 };
 
 addCharts(BUILD, { FG, PALETTE, axesOf, labelFor });

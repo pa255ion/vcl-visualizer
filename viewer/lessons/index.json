@@ -54,5 +54,9 @@
   {
     "file": "check-yourself.vcl",
     "title": "Check yourself (questions: quiz, pick, estimate, recall)"
+  },
+  {
+    "file": "figures.vcl",
+    "title": "Figures from code (matplotlib, Octave; needs vcl serve or a published copy)"
   }
 ]

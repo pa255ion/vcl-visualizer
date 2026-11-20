@@ -21,6 +21,23 @@ test {
 
 pub const version = "0.1";
 
+/// Bumped whenever figure rendering changes (the style sheet, the output), so
+/// cached figures from before are not reused: it seeds every figure's key.
+pub const fig_version: u64 = 1;
+
+/// A `fig`'s key: a hash of its language and code. The rendered figure is
+/// `figs/<key>.svg` (and `.png` for clients that can't draw every SVG), both
+/// from `vcl serve` and in a published static copy.
+pub fn figKey(lang: []const u8, code: []const u8) [16]u8 {
+    var h = std.hash.Wyhash.init(fig_version);
+    h.update(lang);
+    h.update("\x00");
+    h.update(code);
+    var out: [16]u8 = undefined;
+    _ = std.fmt.bufPrint(&out, "{x:0>16}", .{h.final()}) catch unreachable;
+    return out;
+}
+
 // ───────────────────────────── schema ─────────────────────────────
 
 pub const Ty = enum { num, vec, point, str, color, range, boolean, id, word, nums };
@@ -135,6 +152,8 @@ pub const ops = [_]Op{
     .{ .name = "edge", .kind = .draw, .pos = &.{ P("from", .id), P("to", .id) }, .keys = &.{ W("dir", &.{ "fwd", "back", "both", "none" }), P("bend", .num), width, dash }, .dur = 0.5 },
     .{ .name = "img", .kind = .draw, .pos = &.{ P("at", .point), P("url", .str) }, .keys = &.{size}, .dur = 0.6 },
     .{ .name = "svg", .kind = .draw, .pos = &.{ P("at", .point), P("src", .str) }, .keys = &.{size}, .dur = 0.6 },
+    // a figure drawn by code (matplotlib, Octave) on the server: see `figKey`
+    .{ .name = "fig", .kind = .draw, .pos = &.{ P("at", .point), W("lang", &.{ "python", "octave" }), P("code", .str) }, .keys = &.{size}, .dur = 0.8 },
     // engineering diagrams
     .{ .name = "part", .kind = .draw, .pos = &.{ P("at", .point), W("kind", &part_kind_names) }, .keys = &.{ P("rot", .num), P("flip", .boolean), P("value", .str), size }, .dur = 0.5 },
     .{ .name = "wire", .kind = .draw, .pos = &.{.{ .name = "pts", .ty = .point, .many = true, .min = 2 }}, .keys = &.{
@@ -579,6 +598,8 @@ const LineParser = struct {
         }
         if (std.mem.eql(u8, op.name, "axes")) try p.checkAxes(fields.items);
         if (op.question) try p.checkQuestion(fields.items);
+        if (std.mem.eql(u8, op.name, "fig") and std.mem.trim(u8, fieldStr(fields.items, "code").?, " \t\r\n").len == 0)
+            return p.fail("fig: the code is empty; put it in a <<END block: f: fig 0,0 python <<END … END", .{});
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
         if (std.mem.eql(u8, op.name, "board")) {
             var b = default_board;
@@ -723,6 +744,10 @@ const LineParser = struct {
             try writeValue(o, f.val);
         }
         if (samples) |sm| if (p.scene.sample) try o.writeAll(sm);
+        if (std.mem.eql(u8, op.name, "fig")) {
+            const key = figKey(fieldStr(fields.items, "lang").?, fieldStr(fields.items, "code").?);
+            try o.print(",\"key\":\"{s}\"", .{&key});
+        }
         if (derived) |d| try o.writeAll(d.json);
         try o.writeAll("}\n");
     }
@@ -2685,6 +2710,27 @@ test "<<TAG blocks: multi-line strings, even ``` inside mixed mode" {
         \\{"op":"say","line":16,"par":false,"dur":1.2,"text":"Done."}
         \\
     , got);
+}
+
+test "fig: code in a <<END block, keyed by its hash" {
+    const src =
+        \\f: fig 0,1 python size=8 <<END
+        \\x = np.linspace(0, 1)
+        \\plt.plot(x, x**2)
+        \\END
+        \\fig 0,0 matlab "plot(1:3)"
+        \\fig 0,0 octave ""
+    ;
+    const key = figKey("python", "x = np.linspace(0, 1)\nplt.plot(x, x**2)");
+    var buf: [600]u8 = undefined;
+    const want = try std.fmt.bufPrint(&buf,
+        \\{{"op":"fig","id":"f","line":1,"par":false,"dur":0.8,"at":[0,1,0],"lang":"python","code":"x = np.linspace(0, 1)\nplt.plot(x, x**2)","size":8,"key":"{s}"}}
+        \\{{"op":"diag","level":"error","line":5,"msg":"fig: 'lang' must be one of python|octave, got 'matlab'"}}
+        \\{{"op":"diag","level":"error","line":6,"msg":"fig: the code is empty; put it in a <<END block: f: fig 0,0 python <<END … END"}}
+        \\
+    , .{&key});
+    try expectOut(src, want);
+    try std.testing.expect(!std.mem.eql(u8, &key, &figKey("octave", "x = np.linspace(0, 1)\nplt.plot(x, x**2)")));
 }
 
 test "<<TAG blocks: unclosed and misplaced" {

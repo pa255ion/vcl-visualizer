@@ -295,6 +295,38 @@ recall "State Ohm's law." "V = I R: voltage is current times resistance."
 Questions don't go into the replay log: someone who joins later isn't asked
 old ones.
 
+### 4.11 Figures from code
+
+| Op | Arguments | Keys |
+|---|---|---|
+| `fig` | `P LANG S` | a figure drawn by code: `LANG` is `python` (matplotlib) or `octave`; the code is the string, usually a `<<END` block; `size=N` (width, default 8) |
+
+```
+p: fig 0,0 python size=9 <<END
+from scipy.integrate import solve_ivp
+s = solve_ivp(lambda t, y: [y[1], -np.sin(y[0])], (0, 10), [2, 0], dense_output=True)
+t = np.linspace(0, 10, 500)
+plt.plot(t, s.sol(t)[0])
+plt.xlabel("t (s)"); plt.ylabel("θ (rad)")
+END
+```
+
+Use it for what VCL's own ops can't show: results of computation (ODEs,
+transforms, fits, simulations) and specialist plots (phase portraits,
+spectrograms, networks, statistics). VCL's ops animate and can be pointed at
+part by part; a figure is one picture that fades in.
+
+Python code runs with `np` (numpy) and `plt` (matplotlib.pyplot) imported;
+scipy, sympy and networkx are there to import. `plt.show()` isn't needed. The
+figure is 8×5 inches, styled for the board (dark, the board's colours and
+font). Octave code runs as a script; plot as usual (base Octave, no packages).
+
+The server renders the figure (`vcl serve`; `vcl figs` ahead of time for a
+published copy) in a sandbox: no network, no files but a scratch directory, 30 s
+of CPU. If the code fails, the figure shows the error and the line gets a
+diagnostic `fig: <error> (code line N)`. A figure is keyed by its code: the
+same code is rendered once.
+
 ## 5. Mixed mode (prose + visuals)
 
 An LLM's normal reply can be streamed straight in when the server is told
