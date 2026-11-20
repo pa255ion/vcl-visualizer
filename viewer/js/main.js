@@ -226,6 +226,13 @@ async function run(text, mode = 'vcl', fromEditor = false) {
   }
   const p = await localParser();
   if (p.mode !== mode) { p.reset(mode); fedLines = 0; }
+  // `data` results can't be computed here: fetch the ones computed ahead of time.
+  await Promise.all(p.dataKeys(text, mode).map(async (key) => {
+    try {
+      const res = await fetch(`${runtime.figBase}${key}.data.json`);
+      if (res.ok) p.putData(key, await res.text());
+    } catch {}
+  }));
   const base = fedLines;
   fedLines += (text.match(/\n/g) || []).length;
   for (const cmd of p.feed(text)) {

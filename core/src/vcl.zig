@@ -29,7 +29,17 @@ pub const fig_version: u64 = 1;
 /// `figs/<key>.svg` (and `.png` for clients that can't draw every SVG), both
 /// from `vcl serve` and in a published static copy.
 pub fn figKey(lang: []const u8, code: []const u8) [16]u8 {
+    return codeKey("", lang, code);
+}
+
+/// A `data` command's key (its results are `figs/<key>.data.json`).
+pub fn dataKey(lang: []const u8, code: []const u8) [16]u8 {
+    return codeKey("data:", lang, code);
+}
+
+fn codeKey(kind: []const u8, lang: []const u8, code: []const u8) [16]u8 {
     var h = std.hash.Wyhash.init(fig_version);
+    h.update(kind);
     h.update(lang);
     h.update("\x00");
     h.update(code);
@@ -153,6 +163,7 @@ pub const ops = [_]Op{
     .{ .name = "img", .kind = .draw, .pos = &.{ P("at", .point), P("url", .str) }, .keys = &.{size}, .dur = 0.6 },
     .{ .name = "svg", .kind = .draw, .pos = &.{ P("at", .point), P("src", .str) }, .keys = &.{size}, .dur = 0.6 },
     // a figure drawn by code (matplotlib, Octave) on the server: see `figKey`
+    .{ .name = "data", .kind = .flow, .pos = &.{ W("lang", &.{ "python", "octave" }), P("code", .str) }, .dur = 0, .replay = false, .needs_name = true },
     .{ .name = "fig", .kind = .draw, .pos = &.{ P("at", .point), W("lang", &.{ "python", "octave" }), P("code", .str) }, .keys = &.{size}, .dur = 0.8 },
     // engineering diagrams
     .{ .name = "part", .kind = .draw, .pos = &.{ P("at", .point), W("kind", &part_kind_names) }, .keys = &.{ P("rot", .num), P("flip", .boolean), P("value", .str), size }, .dur = 0.5 },
@@ -288,6 +299,19 @@ pub const Scene = struct {
     /// Sample `plot` and `surf` into points (IR fields `polys` and `zgrid`).
     /// Off only in tests that check the rest of the output.
     sample: bool = true,
+    /// Values computed by `data` commands, as text: "d.x" → "1 2 3". Later
+    /// lines (and prose) use them as {d.x}. They outlive `clear`.
+    vars: std.StringHashMapUnmanaged([]u8) = .empty,
+    /// What runs a `data` command's code (the server, `vcl figs`; in the
+    /// browser, a table of results computed ahead of time). Null: none.
+    compute: ?Compute = null,
+
+    pub const Compute = struct {
+        ctx: *anyopaque,
+        run: *const fn (ctx: *anyopaque, lang: []const u8, code: []const u8, key: []const u8) Computed,
+    };
+    /// JSON of the code's variables, or why there is none (both owned by the scene's gpa).
+    pub const Computed = union(enum) { json: []u8, err: []u8, missing };
 
     pub fn init(gpa: Allocator) Scene {
         return .{ .gpa = gpa };
@@ -296,6 +320,45 @@ pub const Scene = struct {
     pub fn deinit(s: *Scene) void {
         s.freeAll();
         s.names.deinit(s.gpa);
+        var it = s.vars.iterator();
+        while (it.next()) |kv| {
+            s.gpa.free(kv.key_ptr.*);
+            s.gpa.free(kv.value_ptr.*);
+        }
+        s.vars.deinit(s.gpa);
+    }
+
+    fn setVar(s: *Scene, name: []const u8, text: []const u8) !void {
+        const v = try s.gpa.dupe(u8, text);
+        errdefer s.gpa.free(v);
+        if (s.vars.getPtr(name)) |old| {
+            s.gpa.free(old.*);
+            old.* = v;
+            return;
+        }
+        const k = try s.gpa.dupe(u8, name);
+        errdefer s.gpa.free(k);
+        try s.vars.put(s.gpa, k, v);
+    }
+
+    /// `text` with every {name.field} of a `data` result replaced by its value
+    /// (other braces, as in LaTeX, stay). Allocated in `a` (or `text` itself).
+    pub fn expand(s: *const Scene, a: Allocator, text: []const u8) Allocator.Error![]const u8 {
+        if (s.vars.count() == 0 or std.mem.indexOfScalar(u8, text, '{') == null) return text;
+        var out: std.ArrayList(u8) = .empty;
+        var i: usize = 0;
+        while (i < text.len) {
+            if (text[i] == '{') if (std.mem.indexOfScalarPos(u8, text, i, '}')) |j| {
+                if (s.vars.get(text[i + 1 .. j])) |v| {
+                    try out.appendSlice(a, v);
+                    i = j + 1;
+                    continue;
+                }
+            };
+            try out.append(a, text[i]);
+            i += 1;
+        }
+        return out.items;
     }
 
     pub fn reset(s: *Scene) void {
@@ -363,8 +426,10 @@ pub const Scene = struct {
     }
 
     /// Emit a `say` (used by mixed mode for prose).
-    pub fn say(s: *Scene, text: []const u8, line_no: u32, out: *Writer) Writer.Error!void {
-        _ = s;
+    pub fn say(s: *Scene, raw: []const u8, line_no: u32, out: *Writer) Writer.Error!void {
+        var arena_state = std.heap.ArenaAllocator.init(s.gpa);
+        defer arena_state.deinit();
+        const text = s.expand(arena_state.allocator(), raw) catch raw;
         try out.print("{{\"op\":\"say\",\"line\":{d},\"par\":false,\"dur\":", .{line_no});
         try writeNum(out, speechDuration(text));
         try out.writeAll(",\"text\":");
@@ -372,6 +437,41 @@ pub const Scene = struct {
         try out.writeAll("}\n");
     }
 };
+
+/// A `data` value as VCL text: a number (6 significant digits), a string as
+/// it is, a list as "a b c", a list of rows as "x,y x,y". False: not usable.
+fn dataText(a: Allocator, out: *std.ArrayList(u8), v: std.json.Value, depth: u8) Allocator.Error!bool {
+    switch (v) {
+        .integer => |i| try out.print(a, "{d}", .{i}),
+        .float => |f| try dataNum(a, out, f),
+        .number_string => |s| try out.appendSlice(a, s),
+        .string => |s| try out.appendSlice(a, s),
+        .bool => |b| try out.appendSlice(a, if (b) "true" else "false"),
+        .array => |arr| {
+            if (depth > 1) return false;
+            for (arr.items, 0..) |item, i| {
+                if (i > 0) try out.append(a, if (depth == 0) ' ' else ',');
+                if (!try dataText(a, out, item, depth + 1)) return false;
+            }
+        },
+        else => return false,
+    }
+    return true;
+}
+
+fn dataNum(a: Allocator, out: *std.ArrayList(u8), f: f64) Allocator.Error!void {
+    if (!std.math.isFinite(f)) return out.appendSlice(a, "0");
+    if (f == @round(f) and @abs(f) < 1e15) return out.print(a, "{d}", .{@as(i64, @intFromFloat(f))});
+    const mag = std.math.log10(@abs(f));
+    const decimals: usize = @intFromFloat(std.math.clamp(5 - @floor(mag), 0, 12));
+    var buf: [64]u8 = undefined;
+    var s: []const u8 = std.fmt.bufPrint(&buf, "{d:.[1]}", .{ f, decimals }) catch return out.appendSlice(a, "0");
+    if (std.mem.indexOfScalar(u8, s, '.') != null) {
+        s = std.mem.trimEnd(u8, s, "0");
+        s = std.mem.trimEnd(u8, s, ".");
+    }
+    try out.appendSlice(a, s);
+}
 
 fn speechDuration(text: []const u8) f64 {
     var words: f64 = 0;
@@ -446,7 +546,21 @@ const LineParser = struct {
         return toks.items;
     }
 
-    fn run(p: *LineParser, line: []const u8) Error!void {
+    fn run(p: *LineParser, src_line: []const u8) Error!void {
+        // {d.x} from `data` results, except in code that runs (fig/data: f-strings use braces).
+        var line = src_line;
+        if (p.scene.vars.count() > 0) {
+            const first = try p.tokenize(src_line);
+            const runs_code = for (first) |t| {
+                const op_text = if (std.mem.indexOfScalar(u8, t.text, ':')) |c| t.text[c + 1 ..] else t.text;
+                if (op_text.len == 0 or std.mem.eql(u8, t.text, "&")) continue;
+                break std.mem.eql(u8, op_text, "fig") or std.mem.eql(u8, op_text, "data") or std.mem.eql(u8, op_text, "&fig") or std.mem.eql(u8, op_text, "&data");
+            } else false;
+            if (!runs_code) {
+                line = try p.scene.expand(p.arena, src_line);
+                if (p.body) |b| p.body = try p.scene.expand(p.arena, b);
+            }
+        }
         var toks = try p.tokenize(line);
         if (toks.len == 0) return;
 
@@ -598,6 +712,7 @@ const LineParser = struct {
         }
         if (std.mem.eql(u8, op.name, "axes")) try p.checkAxes(fields.items);
         if (op.question) try p.checkQuestion(fields.items);
+        if (std.mem.eql(u8, op.name, "data")) return p.runData(name.?, fieldStr(fields.items, "lang").?, fieldStr(fields.items, "code").?);
         if (std.mem.eql(u8, op.name, "fig") and std.mem.trim(u8, fieldStr(fields.items, "code").?, " \t\r\n").len == 0)
             return p.fail("fig: the code is empty; put it in a <<END block: f: fig 0,0 python <<END … END", .{});
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
@@ -750,6 +865,36 @@ const LineParser = struct {
         }
         if (derived) |d| try o.writeAll(d.json);
         try o.writeAll("}\n");
+    }
+
+    /// `name: data LANG <<END … END`: run the code (through the scene's
+    /// `compute`) and keep its variables as {name.var}. No IR of its own.
+    fn runData(p: *LineParser, name: []const u8, lang: []const u8, code: []const u8) Error!void {
+        if (std.mem.trim(u8, code, " \t\r\n").len == 0) return p.fail("data: the code is empty; put it in a <<END block: d: data python <<END … END", .{});
+        const key = dataKey(lang, code);
+        const c = p.scene.compute orelse return p.fail("data: nothing here runs code (it needs vcl serve, or results from vcl figs)", .{});
+        const result = c.run(c.ctx, lang, code, &key);
+        const json = switch (result) {
+            .json => |j| j,
+            .err => |e| {
+                defer p.scene.gpa.free(e);
+                return p.fail("data: {s}", .{e});
+            },
+            .missing => return p.fail("data: not computed (it needs vcl serve; a published copy has only its own lessons' results)", .{}),
+        };
+        defer p.scene.gpa.free(json);
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, p.arena, json, .{}) catch return p.fail("data: unreadable results", .{});
+        if (parsed != .object) return p.fail("data: unreadable results", .{});
+        var it = parsed.object.iterator();
+        var n: usize = 0;
+        while (it.next()) |kv| {
+            var buf: std.ArrayList(u8) = .empty;
+            if (!try dataText(p.arena, &buf, kv.value_ptr.*, 0)) continue;
+            const full = try std.fmt.allocPrint(p.arena, "{s}.{s}", .{ name, kv.key_ptr.* });
+            try p.scene.setVar(full, buf.items);
+            n += 1;
+        }
+        if (n == 0) try p.warn("data: the code set no numbers, lists or strings to use as {{{s}.…}}", .{name});
     }
 
     /// quiz/pick need answer=N (1-based, several for quiz/pick: 1,3) among
@@ -2731,6 +2876,57 @@ test "fig: code in a <<END block, keyed by its hash" {
     , .{&key});
     try expectOut(src, want);
     try std.testing.expect(!std.mem.eql(u8, &key, &figKey("octave", "x = np.linspace(0, 1)\nplt.plot(x, x**2)")));
+}
+
+test "data: computed values fill {d.x} in later lines and prose" {
+    const Fake = struct {
+        fn run(_: *anyopaque, lang: []const u8, code: []const u8, key: []const u8) Scene.Computed {
+            _ = lang;
+            _ = key;
+            if (std.mem.indexOf(u8, code, "boom") != null) return .{ .err = testing.allocator.dupe(u8, "ZeroDivisionError: division by zero (code line 1)") catch unreachable };
+            return .{ .json = testing.allocator.dupe(u8,
+                \\{"peak": 3.14159265, "n": 4, "ys": [1, 2.5, 4], "pts": [[0, 1], [1, 0.5]], "label": "decay", "mod": null}
+            ) catch unreachable };
+        }
+    };
+    var scene = Scene.init(testing.allocator);
+    defer scene.deinit();
+    var dummy: u8 = 0;
+    scene.compute = .{ .ctx = &dummy, .run = Fake.run };
+    var st = Stream.init(.mixed);
+    defer st.deinit(testing.allocator);
+    var aw: Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try st.feed(&scene,
+        \\```vcl
+        \\d: data python <<END
+        \\peak = np.pi
+        \\END
+        \\ax: axes 0,0 x=0..4 y=0..4
+        \\s: scatter ax "{d.pts}"
+        \\bars ax "{d.ys}" labels="{d.label},b,c"
+        \\tex 0,0 "\\frac{a}{d.nope}"
+        \\e: data python "boom"
+        \\```
+        \\The peak is {d.peak}, over {d.n} points.
+        \\
+    , &aw.writer);
+    try st.finish(&scene, &aw.writer);
+    const got = aw.written();
+    try testing.expect(std.mem.indexOf(u8, got, "\"data\"\":\"0,1 1,0.5\"") != null or std.mem.indexOf(u8, got, "\"data\":\"0,1 1,0.5\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\"data\":\"1 2.5 4\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\"labels\":\"decay,b,c\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\\\\frac{a}{d.nope}") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "data: ZeroDivisionError: division by zero (code line 1)") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "The peak is 3.14159, over 4 points.") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\"op\":\"data\"") == null);
+}
+
+test "data: without anything to run the code, an error" {
+    try expectOut("d: data python \"x = 1\"\n",
+        \\{"op":"diag","level":"error","line":1,"msg":"data: nothing here runs code (it needs vcl serve, or results from vcl figs)"}
+        \\
+    );
 }
 
 test "<<TAG blocks: unclosed and misplaced" {

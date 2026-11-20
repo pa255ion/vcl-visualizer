@@ -1,5 +1,6 @@
-//! Figures from code: render a `fig` (Python/matplotlib or Octave) to
-//! `<cache>/<key>.svg`, `.png` and `.json` (where its axes are, for pointing).
+//! Figures and data from code: render a `fig` (Python/matplotlib or Octave)
+//! to `<cache>/<key>.svg`, `.png` and `.json` (where its axes are, for
+//! pointing); run a `data` command to `<cache>/<key>.data.json` (its variables).
 //!
 //! The code comes from a lesson, which usually comes from a language model,
 //! so it runs in a sandbox (bubblewrap): no network, no other processes, the
@@ -18,6 +19,11 @@ const Allocator = std.mem.Allocator;
 
 const render_py = @embedFile("fig/render.py");
 const render_m = @embedFile("fig/render.m");
+const data_py = @embedFile("fig/data.py");
+const data_m = @embedFile("fig/data.m");
+
+/// A figure (`fig`: images) or numbers for the lesson (`data`: JSON).
+pub const Kind = enum { figure, data };
 
 pub const Config = struct {
     /// Absolute paths (null: not found).
@@ -88,26 +94,62 @@ pub fn isKey(s: []const u8) bool {
     return true;
 }
 
-/// Already rendered (successfully or as an error figure)?
-pub fn cached(io: Io, cfg: Config, key: []const u8) bool {
+/// What a run leaves in the cache: `<key>.png` (figure) or `<key>.data.json`.
+fn doneFile(kind: Kind) []const u8 {
+    return if (kind == .figure) ".png" else ".data.json";
+}
+fn errFile(kind: Kind) []const u8 {
+    return if (kind == .figure) ".err" else ".data.err";
+}
+
+fn readCache(gpa: Allocator, io: Io, cfg: Config, key: []const u8, ext: []const u8, limit: usize) ?[]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const p = std.fmt.bufPrint(&buf, "{s}/{s}.png", .{ cfg.cache, key }) catch return false;
-    Io.Dir.accessAbsolute(io, p, .{}) catch return false;
-    return true;
+    const p = std.fmt.bufPrint(&buf, "{s}/{s}{s}", .{ cfg.cache, key, ext }) catch return null;
+    return Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(limit)) catch null;
+}
+
+/// Already rendered (successfully, or as an error figure)?
+pub fn cached(io: Io, cfg: Config, key: []const u8) bool {
+    return cachedKind(io, cfg, key, .figure);
+}
+
+fn cachedKind(io: Io, cfg: Config, key: []const u8, kind: Kind) bool {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    for ([_][]const u8{ doneFile(kind), errFile(kind) }) |ext| {
+        const p = std.fmt.bufPrint(&buf, "{s}/{s}{s}", .{ cfg.cache, key, ext }) catch return false;
+        if (Io.Dir.accessAbsolute(io, p, .{})) return true else |_| {}
+    }
+    return false;
 }
 
 /// The cached error message of a figure whose code failed, if any.
 pub fn cachedError(gpa: Allocator, io: Io, cfg: Config, key: []const u8) ?[]u8 {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const p = std.fmt.bufPrint(&buf, "{s}/{s}.err", .{ cfg.cache, key }) catch return null;
-    return Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(4096)) catch null;
+    return readCache(gpa, io, cfg, key, ".err", 4096);
+}
+
+/// A `data` command's results as JSON (computed now, or from the cache), or why not.
+pub fn compute(gpa: Allocator, io: Io, cfg: Config, lang: []const u8, code: []const u8, key: []const u8, run_it: bool) !union(enum) { json: []u8, failed: []u8, missing } {
+    if (!cachedKind(io, cfg, key, .data)) {
+        if (!run_it) return .missing;
+        switch (try runCode(gpa, io, cfg, .data, lang, code, key)) {
+            .ok => {},
+            .failed => |e| if (!e.drawn) return .{ .failed = e.msg } else gpa.free(e.msg),
+        }
+    }
+    if (readCache(gpa, io, cfg, key, ".data.err", 4096)) |m| return .{ .failed = m };
+    if (readCache(gpa, io, cfg, key, ".data.json", 16 << 20)) |j| return .{ .json = j };
+    return .missing;
 }
 
 /// Render one figure into the cache (a no-op when it is there already).
 pub fn render(gpa: Allocator, io: Io, cfg: Config, lang: []const u8, code: []const u8, key: []const u8) !Outcome {
-    if (!isKey(key)) return fail(gpa, "bad figure key", .{});
-    if (cached(io, cfg, key)) {
-        if (cachedError(gpa, io, cfg, key)) |m| return .{ .failed = .{ .msg = m, .drawn = true } };
+    return runCode(gpa, io, cfg, .figure, lang, code, key);
+}
+
+fn runCode(gpa: Allocator, io: Io, cfg: Config, kind: Kind, lang: []const u8, code: []const u8, key: []const u8) !Outcome {
+    if (!isKey(key)) return fail(gpa, "bad key", .{});
+    if (cachedKind(io, cfg, key, kind)) {
+        if (readCache(gpa, io, cfg, key, errFile(kind), 4096)) |m| return .{ .failed = .{ .msg = m, .drawn = true } };
         return .ok;
     }
     const python = std.mem.eql(u8, lang, "python");
@@ -129,7 +171,11 @@ pub fn render(gpa: Allocator, io: Io, cfg: Config, lang: []const u8, code: []con
         cache.deleteTree(io, work_name) catch {};
     }
     try work.writeFile(io, .{ .sub_path = if (python) "code.py" else "code.m", .data = code });
-    try work.writeFile(io, .{ .sub_path = if (python) "render.py" else "render.m", .data = if (python) render_py else render_m });
+    const script: []const u8 = switch (kind) {
+        .figure => if (python) render_py else render_m,
+        .data => if (python) data_py else data_m,
+    };
+    try work.writeFile(io, .{ .sub_path = if (python) "render.py" else "render.m", .data = script });
     const work_abs = try std.fs.path.join(gpa, &.{ cfg.cache, work_name });
     defer gpa.free(work_abs);
 
@@ -194,18 +240,24 @@ pub fn render(gpa: Allocator, io: Io, cfg: Config, lang: []const u8, code: []con
     defer gpa.free(r.stdout);
     defer gpa.free(r.stderr);
 
-    const drew = if (work.access(io, "out.png", .{})) true else |_| false;
-    if (!drew) {
+    // A figure always leaves an image (an error figure if the code failed); data, its
+    // results or the error. Neither: the machinery failed (not cached, so it's retried).
+    const finished = if (work.access(io, if (kind == .figure) "out.png" else "out.json", .{})) true else |_| if (work.access(io, "err.txt", .{})) kind == .data else |_| false;
+    if (!finished) {
         const tail = lastLines(r.stderr, 4);
         return fail(gpa, "{s} failed: {s}", .{ if (python) "python" else "octave", if (tail.len > 0) tail else "no output (killed?)" });
     }
-    // Into the cache: the images, where the axes are, and the error if the code failed.
+    // Into the cache: the images and where the axes are (or the results), and the error if the code failed.
     var nb: [64]u8 = undefined;
-    for ([_][2][]const u8{ .{ "out.svg", ".svg" }, .{ "meta.json", ".json" }, .{ "err.txt", ".err" }, .{ "out.png", ".png" } }) |pair| {
+    const moves: []const [2][]const u8 = switch (kind) {
+        .figure => &.{ .{ "out.svg", ".svg" }, .{ "meta.json", ".json" }, .{ "err.txt", ".err" }, .{ "out.png", ".png" } },
+        .data => &.{ .{ "err.txt", ".data.err" }, .{ "out.json", ".data.json" } },
+    };
+    for (moves) |pair| {
         const dest = try std.fmt.bufPrint(&nb, "{s}{s}", .{ key, pair[1] });
         work.rename(pair[0], cache, dest, io) catch {};
     }
-    if (cache.readFileAlloc(io, (try std.fmt.bufPrint(&nb, "{s}.err", .{key})), gpa, .limited(4096))) |m|
+    if (cache.readFileAlloc(io, (try std.fmt.bufPrint(&nb, "{s}{s}", .{ key, errFile(kind) })), gpa, .limited(4096))) |m|
         return .{ .failed = .{ .msg = m, .drawn = true } }
     else |_| {}
     return .ok;

@@ -70,6 +70,13 @@ from scipy.integrate import solve_ivp  imported. No plt.show(). 8×5 in, styled 
 …                                      Octave too: `fig P octave <<END … END` (base Octave)
 END
 ```
+Numbers only, drawn by VCL's own ops (they animate): `d: data python <<END … END` runs the code; later lines use its variables as `{d.var}` (lists → `1 2 3`, rows → `x,y x,y`, numbers → 6 digits; round for speech):
+```
+d: data python <<END
+t = np.linspace(0, 6, 120); curve = np.column_stack([t, np.exp(-t / 2) * np.cos(3 * t)]); peak = round(curve[:, 1].max(), 2)
+END
+path {d.curve} on=ax         say "It peaks at {d.peak}."
+```
 Prefer VCL's own ops when they can show it (they animate and can be pointed at); use `fig` for ODE solutions, FFTs, fits, simulations, phase portraits, spectrograms, network layouts. No network or files; 30 s of CPU. If it fails you get `line N: error: fig: … (code line K)`.
 
 **Questions for the learner** (the lesson waits for the answer; you get it back as `[answer] …`)

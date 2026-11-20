@@ -63,11 +63,11 @@ pub fn main(init: std.process.Init) !void {
     const cmd = args[1];
     const rest = args[2..];
     if (std.mem.eql(u8, cmd, "check")) {
-        const errors = try check(io, gpa, rest, out);
+        const errors = try check(io, gpa, init.arena.allocator(), init.environ_map, rest, out);
         try out.flush();
         if (errors > 0) std.process.exit(1);
     } else if (std.mem.eql(u8, cmd, "compile")) {
-        try compile(io, gpa, rest, out);
+        try compile(io, gpa, init.arena.allocator(), init.environ_map, rest, out);
     } else if (std.mem.eql(u8, cmd, "serve")) {
         try serve(io, gpa, init.arena.allocator(), rest, init.environ_map);
     } else if (std.mem.eql(u8, cmd, "figs")) {
@@ -85,9 +85,32 @@ pub fn main(init: std.process.Init) !void {
 
 const DiagJson = struct { level: []const u8, line: u32, msg: []const u8 };
 
-fn runSource(gpa: Allocator, src: []const u8, mode: vcl.Mode) ![]u8 {
+/// Runs `data` commands' code (sandboxed; results cached) for a scene.
+const Computer = struct {
+    gpa: Allocator,
+    io: Io,
+    cfg: fig.Config,
+
+    fn run(ctx: *anyopaque, lang: []const u8, code: []const u8, key: []const u8) vcl.Scene.Computed {
+        const c: *Computer = @ptrCast(@alignCast(ctx));
+        const r = fig.compute(c.gpa, c.io, c.cfg, lang, code, key, true) catch |err|
+            return .{ .err = std.fmt.allocPrint(c.gpa, "couldn't run it: {s}", .{@errorName(err)}) catch return .missing };
+        return switch (r) {
+            .json => |j| .{ .json = j },
+            .failed => |m| .{ .err = m },
+            .missing => .missing,
+        };
+    }
+
+    fn compute(c: *Computer) vcl.Scene.Compute {
+        return .{ .ctx = c, .run = run };
+    }
+};
+
+fn runSource(gpa: Allocator, src: []const u8, mode: vcl.Mode, computer: ?*Computer) ![]u8 {
     var scene = vcl.Scene.init(gpa);
     defer scene.deinit();
+    if (computer) |c| scene.compute = c.compute();
     var st = vcl.Stream.init(mode);
     defer st.deinit(gpa);
     var aw: Io.Writer.Allocating = .init(gpa);
@@ -110,7 +133,8 @@ fn readSource(io: Io, gpa: Allocator, path: []const u8) ![]u8 {
     return r.interface.allocRemaining(gpa, limit);
 }
 
-fn check(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) !usize {
+fn check(io: Io, gpa: Allocator, arena: Allocator, env: *const std.process.Environ.Map, args: []const [:0]const u8, out: *Io.Writer) !usize {
+    var computer: Computer = .{ .gpa = gpa, .io = io, .cfg = try fig.configure(arena, io, env) };
     var errors: usize = 0;
     var force_mixed = false;
     for (args) |a| if (std.mem.eql(u8, a, "--mixed")) {
@@ -125,7 +149,7 @@ fn check(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) !u
             continue;
         };
         defer gpa.free(src);
-        const ir = try runSource(gpa, src, mode);
+        const ir = try runSource(gpa, src, mode, &computer);
         defer gpa.free(ir);
         var cmds: usize = 0;
         var it = std.mem.splitScalar(u8, ir, '\n');
@@ -145,7 +169,8 @@ fn check(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) !u
     return errors;
 }
 
-fn compile(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) !void {
+fn compile(io: Io, gpa: Allocator, arena: Allocator, env: *const std.process.Environ.Map, args: []const [:0]const u8, out: *Io.Writer) !void {
+    var computer: Computer = .{ .gpa = gpa, .io = io, .cfg = try fig.configure(arena, io, env) };
     var mode: vcl.Mode = .vcl;
     var path: ?[]const u8 = null;
     for (args) |a| {
@@ -153,7 +178,7 @@ fn compile(io: Io, gpa: Allocator, args: []const [:0]const u8, out: *Io.Writer) 
     }
     const src = try readSource(io, gpa, path orelse return error.MissingFile);
     defer gpa.free(src);
-    const ir = try runSource(gpa, src, mode);
+    const ir = try runSource(gpa, src, mode, &computer);
     defer gpa.free(ir);
     try out.writeAll(ir);
 }
@@ -391,10 +416,21 @@ fn figsCmd(io: Io, gpa: Allocator, arena: Allocator, args: []const [:0]const u8,
         const src = try readSource(io, gpa, path);
         defer gpa.free(src);
         const mode: vcl.Mode = if (std.mem.endsWith(u8, path, ".md")) .mixed else .vcl;
-        const ir = try runSource(gpa, src, mode);
+        var computer: Computer = .{ .gpa = gpa, .io = io, .cfg = cfg };
+        const ir = try runSource(gpa, src, mode, &computer);
         defer gpa.free(ir);
         var it = std.mem.splitScalar(u8, ir, '\n');
         while (it.next()) |line| {
+            // `data` ran while parsing (its results went into the same directory); report failures.
+            if (isDiag(line)) {
+                const d = std.json.parseFromSlice(DiagJson, gpa, line, .{ .ignore_unknown_fields = true }) catch continue;
+                defer d.deinit();
+                if (std.mem.startsWith(u8, d.value.msg, "data:")) {
+                    failed += 1;
+                    try out.print("{s}:{d}: {s}\n", .{ path, d.value.line, d.value.msg });
+                }
+                continue;
+            }
             if (!std.mem.eql(u8, opName(line), "fig")) continue;
             const f = parseFig(gpa, line) orelse continue;
             defer f.deinit();
@@ -478,6 +514,12 @@ fn serve(io: Io, gpa: Allocator, arena: Allocator, args: []const [:0]const u8, e
     }
     var hub: Hub = .{ .io = io, .gpa = gpa, .root = root, .assets = assets, .library = library, .scene = vcl.Scene.init(gpa), .port = port, .figs = figs };
     defer hub.scene.deinit();
+    // `data` commands run while their line is parsed (under the hub's lock: the next lines need them).
+    var computer: Computer = undefined;
+    if (figs) |cfg| {
+        computer = .{ .gpa = gpa, .io = io, .cfg = cfg };
+        hub.scene.compute = computer.compute();
+    }
     defer hub.fig_group.cancel(io);
 
     const addr = try Io.net.IpAddress.parse(host, port);
@@ -762,10 +804,11 @@ fn route(hub: *Hub, req: *std.http.Server.Request, conn: *Conn, path: []const u8
 /// renders), else pre-rendered under ROOT/figs/.
 fn figRoute(hub: *Hub, req: *std.http.Server.Request, name: []const u8) !bool {
     const gpa = hub.gpa;
-    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse name.len;
+    const is_data = std.mem.endsWith(u8, name, ".data.json"); // a `data` command's results
+    const dot = if (is_data) name.len - ".data.json".len else std.mem.lastIndexOfScalar(u8, name, '.') orelse name.len;
     const key = name[0..dot];
     const ext = name[dot..];
-    const known = std.mem.eql(u8, ext, ".svg") or std.mem.eql(u8, ext, ".png") or std.mem.eql(u8, ext, ".json");
+    const known = is_data or std.mem.eql(u8, ext, ".svg") or std.mem.eql(u8, ext, ".png") or std.mem.eql(u8, ext, ".json");
     if (!fig.isKey(key) or !known) {
         try req.respond("bad figure name\n", .{ .status = .bad_request });
         return true;

@@ -25,3 +25,15 @@ plot(f(1:end/2), X(1:end/2));
 xlabel('frequency (Hz)'); ylabel('|X(f)|'); title('Spectrum of a chirp');
 END
 say "And Octave computes the spectrum of a chirp: its energy spreads from 20 to 300 hertz."
+say "Code can also just compute numbers, and the board draws them itself, so they animate."
+clear
+title "Computed, then drawn"
+d: data python <<END
+from scipy.integrate import solve_ivp
+s = solve_ivp(lambda t, y: [y[1], -0.3 * y[1] - 4 * y[0]], (0, 12), [1, 0], t_eval=np.linspace(0, 12, 160))
+curve = np.column_stack([s.t, s.y[0]])
+period = round(2 * np.pi / np.sqrt(4 - 0.3**2 / 4), 1)
+END
+ax: axes 0,-0.6 x=0..12 y=-1..1 size=13,6.5 xlabel="t (s)" ylabel="x (m)"
+path {d.curve} on=ax color=cyan dur=3
+say "A damped spring, solved by scipy: each swing takes about {d.period} seconds, and every swing is smaller."

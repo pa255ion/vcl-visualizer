@@ -69,8 +69,10 @@ scipy, sympy, networkx) or `fig P octave <<END … END` draws a figure computed 
 code. `vcl serve` renders it in a bubblewrap sandbox (no network, nothing of
 your files, CPU and memory limits) and caches it in `~/.cache/vcl/figs`; run the
 server inside `nix develop` for Python, Octave and bwrap. `vcl figs FILE…`
-renders ahead of time; `tools/publish.sh` does that for the static copy. See
-`viewer/lessons/figures.vcl`.
+renders ahead of time; `tools/publish.sh` does that for the static copy.
+`d: data python <<END … END` runs code only for its numbers: later lines use
+its variables as `{d.var}`, so VCL's own animated ops draw them (`path {d.curve}
+on=ax`). See `viewer/lessons/figures.vcl`.
 
 Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
 go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then

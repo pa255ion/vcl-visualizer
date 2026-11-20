@@ -327,6 +327,33 @@ of CPU. If the code fails, the figure shows the error and the line gets a
 diagnostic `fig: <error> (code line N)`. A figure is keyed by its code: the
 same code is rendered once.
 
+| Op | Arguments | Keys |
+|---|---|---|
+| `data` | `LANG S` | runs code for its numbers (needs a name): later lines use its variables as `{name.var}` |
+
+```
+d: data python <<END
+from scipy.integrate import solve_ivp
+s = solve_ivp(lambda t, y: [y[1], -0.3 * y[1] - 4 * y[0]], (0, 12), [1, 0], t_eval=np.linspace(0, 12, 160))
+curve = np.column_stack([s.t, s.y[0]])
+period = round(2 * np.pi / np.sqrt(4 - 0.3**2 / 4), 1)
+END
+ax: axes 0,0 x=0..12 y=-1..1 size=13,6.5
+path {d.curve} on=ax
+say "Each swing takes about {d.period} seconds."
+```
+
+`{d.var}` is replaced by the variable's value as text, in commands, `<<END`
+blocks and prose (not in `fig`/`data` code): a number (6 significant digits;
+round it in the code for speech), a string as it is, a list as `1 2 3` (for
+`bars`, `hist`, `grid`), rows as `x,y x,y` (points: `path`, `poly`, `scatter`).
+Only numbers, strings, lists and 1D/2D arrays become variables. The code runs
+while its line is parsed, in the same sandbox as figures, and the lesson waits
+for it (the next lines need its numbers); results are cached by the code. A
+failure is an error on the line: `data: <error> (code line N)`. It has no IR of
+its own. Octave works the same way (`data octave`); its numeric and text
+variables are kept.
+
 ## 5. Mixed mode (prose + visuals)
 
 An LLM's normal reply can be streamed straight in when the server is told

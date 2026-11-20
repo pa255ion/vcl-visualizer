@@ -171,6 +171,11 @@ image. The JSON gives each axes' box in the figure (fractions from the bottom
 left), its `x`/`y` limits and log flags. A figure whose code fails still gets
 an image (the error), and the server sends a diagnostic for the line.
 
+`data` has no IR: the parser runs its code (through the server, or results
+computed ahead of time as `figs/<key>.data.json` for a static copy, where the
+key hashes `data:`, the language and the code) and fills `{name.var}` in the
+lines after it, so clients only see the resulting commands.
+
 ## Parts
 
 `hl`, `color` and `fade` may target one part of a diagram instead of a whole
