@@ -36,7 +36,7 @@ namespace Vcl
             this.stage = stage;
             home = center;
             var root = Draw.Child(stage, "board").transform;
-            slate = Draw.MeshObject(root, "slate", new Mesh(), Draw.Unlit(Draw.Hex("#121924") * new Color(1, 1, 1, 0.96f), 2900), -10);
+            slate = Draw.MeshObject(root, "slate", new Mesh(), Draw.Unlit(Draw.Hex("#121924") * new Color(1, 1, 1, 0.99f), 2900), -10);
             slate.transform.localPosition = new Vector3(0, 0, 0.05f);
             edge = new Stroke(root, Draw.Hex("#2a3647"), 0.05f) { Order = -9 };
             edge.Obj.transform.localPosition = new Vector3(0, 0, 0.04f);

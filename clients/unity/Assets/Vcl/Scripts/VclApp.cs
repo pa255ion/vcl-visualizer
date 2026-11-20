@@ -51,6 +51,10 @@ namespace Vcl
         int stickSide;
         /// <summary>The tracked space: the camera moves in it, and it moves (move mode) in the world.</summary>
         public Transform Rig;
+        public Scenery Scenery;
+        public Ambience Ambience;
+        Light sun;
+        MeshRenderer floor;
         bool moving;
         static readonly float[] Speeds = { 1, 1.25f, 1.5f, 1.75f, 2, 0.75f };
         /// <summary>VRM avatars on the server (assets/…vrm): the teacher choices after the robot.</summary>
@@ -231,7 +235,7 @@ namespace Vcl
             RenderSettings.ambientEquatorColor = Draw.Hex("#5a6478") * 0.9f;
             RenderSettings.ambientGroundColor = Draw.Hex("#1a1f2a");
 
-            var sun = new GameObject("sun").AddComponent<Light>();
+            sun = new GameObject("sun").AddComponent<Light>();
             sun.type = LightType.Directional;
             sun.intensity = 1.1f;
             sun.shadows = LightShadows.None;
@@ -240,7 +244,7 @@ namespace Vcl
             Classroom = new GameObject("classroom").transform;
             var floorMat = Draw.Unlit(Draw.Hex("#0e131b"), 2000, false);
             floorMat.SetFloat("_ZWrite", 1);
-            var floor = Draw.MeshObject(Classroom, "floor", Draw.Primitive(PrimitiveType.Quad), floorMat, -20);
+            floor = Draw.MeshObject(Classroom, "floor", Draw.Primitive(PrimitiveType.Quad), floorMat, -20);
             floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
             floor.transform.localScale = new Vector3(14, 14, 1);
             floor.transform.localPosition = new Vector3(0, 0, 1.5f);
@@ -269,7 +273,20 @@ namespace Vcl
             Runtime = new Runtime(stage, Board, Avatar, Cam, Log);
             Runtime.LoadTexture = (u, done) => LoadTexture(u, done);
             Runtime.LoadBytes = (u, done) => LoadBytes(u, done);
-            Runtime.OnAnswer = PostAnswer;
+            Runtime.OnAnswer = a =>
+            {
+                PostAnswer(a);
+                if (!(bool)a["skipped"]) Ambience?.Answer((bool)a["correct"]);
+            };
+            Runtime.OnBegin = SoundFor;
+            Scenery = new Scenery(Classroom, Cam, sun, floor.gameObject);
+            Scenery.Set(PlayerPrefs.GetString("vcl.scene", "night"));
+            if (Application.isPlaying)
+            {
+                Ambience = new GameObject("ambience").AddComponent<Ambience>();
+                Ambience.SetMode(PlayerPrefs.GetString("vcl.sound", "all"));
+                Ambience.SetScene(Scenery.Name);
+            }
             Transcript = new Transcript(Runtime);
             uiLaser = new GameObject("ui laser").AddComponent<LineRenderer>();
             uiLaser.useWorldSpace = true;
@@ -310,6 +327,22 @@ namespace Vcl
                     var next = all[(all.IndexOf(teacher) + 1) % all.Count];
                     PlayerPrefs.SetString("vcl.teacher", next);
                     LoadTeacher(next);
+                },
+                SceneLabel = () => Scenery.Label(Scenery.Name),
+                CycleScene = () =>
+                {
+                    var next = Scenery.Names[(System.Array.IndexOf(Scenery.Names, Scenery.Name) + 1) % Scenery.Names.Length];
+                    Scenery.Set(next);
+                    Ambience?.SetScene(next);
+                    PlayerPrefs.SetString("vcl.scene", next);
+                },
+                SoundLabel = () => Ambience.ModeLabel(Ambience ? Ambience.Mode : "off"),
+                CycleSound = () =>
+                {
+                    if (!Ambience) return;
+                    var next = Ambience.Modes[(System.Array.IndexOf(Ambience.Modes, Ambience.Mode) + 1) % Ambience.Modes.Length];
+                    Ambience.SetMode(next);
+                    PlayerPrefs.SetString("vcl.sound", next);
                 },
                 TranscriptShown = () => Transcript.Visible,
                 ToggleTranscript = () => Transcript.Visible = !Transcript.Visible,
@@ -371,6 +404,7 @@ namespace Vcl
                 for (int n = 0; n < 200 && conn.Inbox.TryDequeue(out var msg); n++) Feed(msg);
             HandleInput();
             Runtime.Update(Time.deltaTime);
+            Scenery.Update(Time.deltaTime);
             Transcript.Update();
             Avatar.Update(Time.deltaTime, Cam.transform.position);
             UpdateStatus();
@@ -380,6 +414,31 @@ namespace Vcl
                 smokeAt = -1;
                 Application.Quit();
             }
+        }
+
+        // ── scene sounds ──
+
+        static readonly HashSet<string> Pops = new HashSet<string> { "pt", "node", "box", "sphere", "cyl", "model" };
+        static readonly HashSet<string> Fades = new HashSet<string> { "text", "tex", "title", "img", "svg", "code", "table", "grid", "bits", "band" };
+        static readonly HashSet<string> Draws = new HashSet<string> { "line", "arrow", "path", "poly", "rect", "circle", "angle", "edge", "axes", "plot", "surf",
+            "part", "wire", "block", "frame", "wave", "nn", "bars", "hist", "scatter", "errbar", "contour" };
+        float lastSound;
+
+        /// <summary>A soft sound for each thing that appears (not too many at once); the music dips under speech.</summary>
+        void SoundFor(Task t)
+        {
+            if (!Ambience || t.Cmd == null) return;
+            string op = t.Cmd.Op;
+            float secs = (float)t.Dur / Runtime.Speed;
+            if (secs < 0.05f) return; // instant: replaying or skipping
+            if (op == "say") { Ambience.Duck(secs); return; }
+            if (op == "quiz" || op == "pick" || op == "estimate" || op == "recall") { Ambience.Question(); return; }
+            if (Time.realtimeSinceStartup - lastSound < 0.09f) return;
+            if (Draws.Contains(op)) Ambience.DrawSound(secs);
+            else if (Pops.Contains(op)) Ambience.Pop();
+            else if (Fades.Contains(op)) Ambience.Fade();
+            else return;
+            lastSound = Time.realtimeSinceStartup;
         }
 
         // ── headset ──

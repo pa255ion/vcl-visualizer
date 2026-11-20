@@ -41,7 +41,8 @@ namespace Vcl
         public Action Stop, ToggleStep, ToggleVoice, ToggleTranscript, Upright, Recline, Refresh;
         public Func<bool> Stepping, Reclined, Voiced, TranscriptShown, Moving;
         public Action CycleSpeed, ToggleMove, CycleTeacher;
-        public Func<string> SpeedLabel, TeacherLabel;
+        public Func<string> SpeedLabel, TeacherLabel, SceneLabel, SoundLabel;
+        public Action CycleScene, CycleSound;
 
         Transform root, content;
         readonly List<Button> buttons = new List<Button>();
@@ -121,8 +122,9 @@ namespace Vcl
             ActionButton(x, row2, TranscriptShown() ? "Transcript: on" : "Transcript: off", () => { ToggleTranscript(); Rebuild(); });
             // The teacher: the robot, or a VRM avatar from the server's assets.
             float row3 = row2 - 1.15f;
-            Label("Teacher", new Vector3(left, row3, 0), 0.6f, Draw.Hex("#8a98ab"), "left");
-            ActionButton(right, row3, TeacherLabel(), () => { CycleTeacher(); Rebuild(); });
+            float x3 = ActionButton(right, row3, "Teacher: " + TeacherLabel(), () => { CycleTeacher(); Rebuild(); });
+            x3 = ActionButton(x3, row3, "Sound: " + SoundLabel(), () => { CycleSound(); Rebuild(); });
+            ActionButton(x3, row3, "Scene: " + SceneLabel(), () => { CycleScene(); Rebuild(); });
 
             // Rows: folders, or the lessons of one folder.
             var rows = new List<(string text, Action act, string hint)>();

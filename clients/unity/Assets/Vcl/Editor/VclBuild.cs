@@ -287,6 +287,7 @@ namespace Vcl.EditorTools
             app.Cam = cam;
             app.Build();
             app.AssetRoot = Env("VCL_ASSETS") ?? Path.GetFullPath("../../viewer"); // lesson files (svg, models) from disk
+            app.Scenery.Set(Env("VCL_SCENE") ?? "night"); // VCL_SCENE=aero|tech|demo: the surroundings
             var spoken = app.Avatar.Voice.Prepare("Testing the voice.");
             Debug.Log($"[vcl] voice: {(spoken.HasValue ? $"{spoken.Value.dur:F2} s of speech" : "none: " + (app.Avatar.Voice.Error ?? "off"))}");
             // VCL_VRM=file.vrm: that avatar as the teacher.

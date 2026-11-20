@@ -113,6 +113,14 @@ The menu also has a **Voice** switch (robot voice or subtitles only) and a
   remembered. A VRChat avatar can be used by exporting it as VRM (UniVRM's
   exporter in Unity, or from VRoid). `.vrm` files in `viewer/assets/` are
   git-ignored, since avatars are usually licensed to you.
+* **Scene**: the surroundings, as in the browser: Night (the plain dark room),
+  Aero (bright sky, glossy platform, hills, clouds, soap bubbles), Tech (glowing
+  grid, distant towers, rising motes) or Demo (synthwave sun, scrolling grid,
+  rotating vector shapes). Built from shaders and generated meshes
+  (`Resources/Vcl*.shader`, `Scenery.cs`).
+* **Sound**: music (generative music in the scene's key, a background bed,
+  soft sounds as things are drawn, the music dipping under speech), effects
+  only, or off. Synthesized on the audio thread (`Ambience.cs`), no audio files.
 
 The **menu** lists the server's built-in lessons and its `--lessons` library,
 one folder per subfolder; point with either controller and pull the trigger.
