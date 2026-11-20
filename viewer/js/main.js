@@ -548,6 +548,15 @@ $('#next').onclick = () => runtime.next();
 $('#back').onclick = () => runtime.back();
 $('#fwd').onclick = () => runtime.forward();
 $('#pause').onclick = () => runtime.togglePause();
+$('#practice').onclick = () => {
+  if (runtime.practicing) return runtime.endPractice();
+  if (!runtime.practice()) log('info', 'this lesson has no questions to practise');
+};
+runtime.onPractice = ({ right, total }) => {
+  const msg = total ? `✓ Practice done · ${right} of ${total} right` : '✓ Practice done';
+  log('info', msg);
+  avatar.hear(msg, { thinking: false, secs: 8 });
+};
 // Space: next step (step mode) or pause/resume; → skips to the next step, ← goes back one.
 addEventListener('keydown', (e) => {
   if (e.target.closest?.('textarea, input, select')) return;
@@ -578,9 +587,14 @@ function showPlayState() {
     $('#progress-label').textContent = `${state === 'done' ? steps : Math.max(at, 1)} / ${steps}`;
   }
   $('#dock').hidden = !steps && !state && $('#next').hidden;
+  const pr = $('#practice');
+  pr.hidden = !runtime.practicing && !runtime.questionSteps.length;
+  pr.textContent = runtime.practicing ? `End practice (${runtime.practicing.i + 1}/${runtime.practicing.steps.length})` : 'Practice';
+  pr.classList.toggle('on', !!runtime.practicing);
   $('#pause').textContent = rs === 'paused' ? '▶' : '❚❚';
   $('#pause').title = rs === 'paused' ? 'Resume (Space)' : 'Pause (Space)';
-  if (finished) {
+  if (finished && runtime.practiceEnded) runtime.practiceEnded = false; // its own message is showing
+  else if (finished) {
     const { right, total } = runtime.score;
     const score = total ? ` · ${right} of ${total} right` : '';
     play.dataset.score = score;

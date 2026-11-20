@@ -17,6 +17,7 @@ namespace Vcl
     {
         public object Given;   // List<object> of 1-based numbers (quiz, pick), a double (estimate), a bool (recall); null if skipped
         public bool Correct, Skipped;
+        public string Confidence; // "guess", "fairly", "sure", or null: how sure the learner said they were
     }
 
     /// <summary>Something the learner can press: a rectangle in T's local XY plane.</summary>
@@ -70,6 +71,9 @@ namespace Vcl
         double value;
         readonly double step;
         bool revealed;
+        bool moved;        // estimate: the slider has been moved (Check needs it)
+        string confidence; // how sure (optional)
+        string hint;
         public QuestionResult Result { get; private set; }
         public bool Answered => Result != null;
         public readonly List<Hit> Hits = new List<Hit>();
@@ -88,7 +92,8 @@ namespace Vcl
             {
                 var r = cmd.Range("range");
                 step = cmd.Num("step", NiceStep(r[0], r[1]));
-                value = Snap((r[0] + r[1]) / 2);
+                // Somewhere random (away from the answer and the middle), not where a guess would sit.
+                value = Snap(StartValue(r[0], r[1], cmd.Num("answer", (r[0] + r[1]) / 2)));
             }
             if (cmd.Op == "quiz") order = OptionOrder(Strings("options"));
             root = Draw.Child(rt.Stage, "question").transform;
@@ -204,7 +209,9 @@ namespace Vcl
             string kind = c.Op == "quiz" ? (multi ? "Choose every right answer" : "Question")
                 : pick ? (multi ? "Point at every right one on the board" : "Point at it on the board")
                 : c.Op == "estimate" ? "Estimate" : "Recall";
-            Text(kind.ToUpperInvariant(), 0.24f, Muted);
+            if (c.Bool("predict")) kind = "Guess first (not scored) · " + kind;
+            if (c.Has("from")) kind = $"Review from {c.Str("from")} · " + kind;
+            Text(kind.ToUpperInvariant(), 0.24f, c.Bool("predict") ? Draw.Hex("#ffe066") : c.Has("from") ? Draw.Hex("#b58cff") : Muted, X0, Inner - 2.6f); // clear of the drag grip
             y -= 0.12f;
             Text(c.Str("q"), 0.44f, Draw.FG, X0, pick && res == null ? Inner - 2.2f : Inner);
             y -= pick ? 0.15f : 0.3f;
@@ -237,7 +244,7 @@ namespace Vcl
             {
                 if (!revealed)
                 {
-                    Text("Think of the answer, then reveal it.", 0.3f, Muted, bold: false);
+                    Text("Say the answer out loud, then reveal it.", 0.3f, Muted, bold: false);
                     y -= 0.2f;
                     Button(X0, y, 3.4f, 0.75f, "Show answer", () => { revealed = true; Render(); });
                     y -= 0.9f;
@@ -252,7 +259,10 @@ namespace Vcl
             y -= 0.1f;
             if (res != null)
             {
-                string head = res.Skipped ? "Skipped" : res.Correct ? (c.Op == "recall" ? "✓ Good" : "✓ Correct") : (c.Op == "recall" ? "Worth another look" : "✗ Not quite");
+                string head = res.Skipped ? "Skipped"
+                    : c.Bool("predict") ? (res.Correct ? "✓ Good guess" : "Not this time: now let's see why")
+                    : res.Correct ? (c.Op == "recall" ? "✓ Good" : res.Confidence == "guess" ? "✓ Correct (a lucky guess? it will come back)" : "✓ Correct")
+                    : c.Op == "recall" ? "Worth another look" : res.Confidence == "sure" ? "✗ Not quite, though you were sure: worth remembering why" : "✗ Not quite";
                 Text(head, 0.42f, res.Skipped ? Muted : res.Correct ? OkFg : ErrFg);
                 if (c.Op == "estimate" && !res.Skipped) Text($"You said {Format((double)res.Given)}; the answer is {Format(c.Num("answer", 0))}.", 0.32f, Draw.FG, bold: false);
                 var explain = c.Str("explain");
@@ -278,8 +288,28 @@ namespace Vcl
                     }
                     else if (canCheck)
                     {
+                        if (hint != null) { Text(hint, 0.28f, Draw.Hex("#ffe066"), bold: false); y -= 0.15f; }
+                        // How sure? (optional): a sure mistake is the one most worth correcting.
+                        if (!c.Bool("predict"))
+                        {
+                            Text("How sure are you?", 0.26f, Muted, bold: false);
+                            y -= 0.08f;
+                            float cx = X0;
+                            foreach (var (k, label) in new[] { ("guess", "Guessing"), ("fairly", "Fairly"), ("sure", "Sure") })
+                            {
+                                bool on = confidence == k;
+                                var key = k;
+                                Button(cx, y, 2.1f, 0.6f, label, () => { confidence = on ? null : key; Render(); }, on ? Chosen : ButtonC, "center", 0.28f);
+                                cx += 2.25f;
+                            }
+                            y -= 0.8f;
+                        }
                         bool ready = c.Op == "estimate" || chosen.Count > 0;
-                        Button(X0, y, 2.6f, 0.75f, "Check", ready ? () => Finish(c.Op == "estimate" ? (object)value : chosen.Select(n => (object)(double)n).ToList()) : (Action)null, ready ? Chosen : ButtonC);
+                        Button(X0, y, 2.6f, 0.75f, "Check", ready ? () =>
+                        {
+                            if (c.Op == "estimate" && !moved) { hint = "Drag the slider to your estimate first."; Render(); return; }
+                            Finish(c.Op == "estimate" ? (object)value : chosen.Select(n => (object)(double)n).ToList());
+                        } : (Action)null, ready ? Chosen : ButtonC);
                     }
                     Button(W / 2 - Pad - 1.9f, y, 1.9f, 0.75f, "Skip", Skip, ButtonC, "center", 0.3f);
                     y -= 0.75f;
@@ -392,6 +422,8 @@ namespace Vcl
             grab.localPosition = new Vector3(x + w / 2, yy, -0.01f);
             void Set(Vector3 local)
             {
+                moved = true;
+                hint = null;
                 value = Snap(lo + (local.x + w / 2) / w * (hi - lo));
                 knob.localPosition = new Vector3(At(value), yy, -0.03f);
                 val.text = Format(value);
@@ -481,7 +513,7 @@ namespace Vcl
         {
             if (Result != null) return;
             if (given is double v) value = v;
-            Result = new QuestionResult { Given = given, Correct = Grade(Cmd, given) };
+            Result = new QuestionResult { Given = given, Correct = Grade(Cmd, given), Confidence = confidence };
             Render();
             done(Result);
         }
@@ -495,6 +527,18 @@ namespace Vcl
         }
 
         public void Update(float dt) { }
+
+        /// <summary>Where an estimate's slider starts: random, but not near the answer (or the middle).</summary>
+        public static double StartValue(double lo, double hi, double answer)
+        {
+            double span = hi - lo;
+            for (int i = 0; i < 20; i++)
+            {
+                double v = lo + UnityEngine.Random.value * span;
+                if (Math.Abs(v - answer) > span * 0.2 && Math.Abs(v - (lo + hi) / 2) > span * 0.05) return v;
+            }
+            return Math.Abs(lo - answer) > Math.Abs(hi - answer) ? lo : hi;
+        }
 
         public void Dispose()
         {

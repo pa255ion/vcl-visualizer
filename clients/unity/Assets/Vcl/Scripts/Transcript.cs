@@ -28,7 +28,7 @@ namespace Vcl
         }
         /// <summary>The status line ("playing", "finished · 3 of 4 right"…), set by the app.</summary>
         public string Status = "";
-        int lastHistory = -1, lastStep, lastResults;
+        int lastHistory = -1, lastStep, lastResults, lastPractice = -2;
         float lastBh;
         string lastState, lastStatus;
 
@@ -79,8 +79,9 @@ namespace Vcl
             root.localRotation = Quaternion.Euler(0, 20, 0);
             // Redraw only when something it shows changed.
             int h = rt.History.Count;
-            if (h == lastHistory && rt.Step == lastStep && rt.Results.Count == lastResults && bh == lastBh && rt.State == lastState && Status == lastStatus) return;
-            (lastHistory, lastStep, lastResults, lastBh, lastState, lastStatus) = (h, rt.Step, rt.Results.Count, bh, rt.State, Status);
+            int practice = rt.Practicing?.I ?? -1;
+            if (h == lastHistory && rt.Step == lastStep && rt.Results.Count == lastResults && bh == lastBh && rt.State == lastState && Status == lastStatus && practice == lastPractice) return;
+            (lastHistory, lastStep, lastResults, lastBh, lastState, lastStatus, lastPractice) = (h, rt.Step, rt.Results.Count, bh, rt.State, Status, practice);
             Render(Entries(), bh);
         }
 
@@ -95,15 +96,21 @@ namespace Vcl
             var edge = new Stroke(root, EdgeC, 0.04f) { Order = Order + 1 };
             edge.Set(new List<List<Vector3>> { Draw.RoundedRect(W, h, 0.3f) });
 
-            // Header: status, and the playback buttons.
+            // Header: the playback buttons and Practice (just the questions again); then the status.
             float y = top - Pad;
-            Label(Status, x0, y - 0.25f, 0.3f, Draw.FG, "left");
             bool paused = rt.State == "paused";
             float bx = W / 2 - Pad - 0.85f;
             Button(bx, y - 0.25f, 0.85f, 0.6f, "▶▶", () => rt.Forward());
             Button(bx - 0.95f, y - 0.25f, 0.85f, 0.6f, paused ? "▶" : "||", () => rt.TogglePause());
             Button(bx - 1.9f, y - 0.25f, 0.85f, 0.6f, "◀◀", () => rt.Back());
-            y -= 0.9f;
+            if (rt.Practicing != null || rt.QuestionSteps.Count > 0)
+                Button(x0 - 0.05f, y - 0.25f, 2.6f, 0.6f, rt.Practicing != null ? "End practice" : "Practice", () =>
+                {
+                    if (rt.Practicing != null) rt.EndPractice(); else rt.Practice();
+                }, 0.3f);
+            y -= 0.75f;
+            Label(Status, x0, y - 0.2f, 0.28f, Draw.FG, "left");
+            y -= 0.55f;
             var rule = Draw.MeshObject(root, "rule", Draw.Fill(Draw.RoundedRect(inner, 0.03f, 0.01f)), Draw.Unlit(EdgeC, 3006), Order + 1).transform;
             rule.localPosition = new Vector3(0, y, -0.01f);
             y -= 0.25f;
@@ -157,12 +164,12 @@ namespace Vcl
             return t;
         }
 
-        void Button(float x, float y, float w, float h, string label, Action press)
+        void Button(float x, float y, float w, float h, string label, Action press, float size = 0.34f)
         {
             var mat = Draw.Unlit(ButtonC, 3006);
             var b = Draw.MeshObject(root, "button", Draw.Fill(Draw.RoundedRect(w, h, 0.12f)), mat, Order + 2).transform;
             b.localPosition = new Vector3(x + w / 2, y, -0.01f);
-            var t = Draw.Text(root, label, 0.34f, Draw.FG, "center", true);
+            var t = Draw.Text(root, label, size, Draw.FG, "center", true);
             t.transform.localPosition = new Vector3(x + w / 2, y, -0.03f);
             t.renderer.sortingOrder = Order + 3;
             Hits.Add(new Hit

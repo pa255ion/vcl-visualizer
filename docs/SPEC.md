@@ -292,6 +292,26 @@ estimate "Roughly what is e?" 2..3.5 answer=2.718 tol=0.05
 recall "State Ohm's law." "V = I R: voltage is current times resistance."
 ```
 
+All four take `from=S` (review of an earlier lesson: the card says "Review
+from S") and, except `recall`, `predict=true` (a guess before the teaching: the
+card says "Guess first (not scored)", the score leaves it out and practice
+skips it). The estimate slider starts at a random place away from the answer
+and must be moved before Check; quiz and estimate cards also let the learner
+say how sure they are (guessing, fairly, sure), sent with the answer. A recall
+card asks the learner to say the answer out loud before revealing it.
+
+The parser warns when a question gives itself away: its answer readable on the
+board (a text, node, table, code or label that is not faded out), a `pick`
+whose right choice is labelled with a word from the question, a right option
+much longer than the others, an estimate answer in the middle of its range, a
+recall answer over about 20 words (except a recap that asks to list), and
+numbers in speech with three or more decimals. `vcl check --design` reviews a
+whole lesson against docs/LESSON-DESIGN.md.
+
+**Practice.** A viewer can replay a lesson's questions only (the Practice
+button; the Quest transcript's): each question with the board rebuilt as it
+stood then, one after another, then the score. Predictions are left out.
+
 Questions don't go into the replay log: someone who joins later isn't asked
 old ones.
 

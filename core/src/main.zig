@@ -1,6 +1,7 @@
 //! vcl — command-line tool and live stream server.
 //!
-//!   vcl check [--mixed] FILE...  report diagnostics (exit 1 on errors); .md is mixed; - is stdin
+//!   vcl check [--mixed] [--design] FILE...  report diagnostics (exit 1 on errors); .md is
+//!                                mixed; - is stdin; --design: lesson design advice (design.zig)
 //!   vcl compile [--mixed] FILE   print the JSON IR, one command per line (- is stdin)
 //!   vcl serve [--port N] [--host H] [--root DIR] [--assets DIR] [--lessons DIR]
 //!             [--no-figs] [--unsafe-figs]
@@ -32,13 +33,15 @@ const builtin = @import("builtin");
 const vcl = @import("vcl");
 const quest = @import("quest.zig");
 const fig = @import("fig.zig");
+const design = @import("design.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const WebSocket = std.http.Server.WebSocket;
 
 const usage =
     \\usage:
-    \\  vcl check [--mixed] FILE...    report diagnostics (.md files are mixed; - reads stdin)
+    \\  vcl check [--mixed] [--design] FILE...   report diagnostics (.md files are mixed; - reads stdin);
+    \\                                 --design: also how well it teaches (docs/LESSON-DESIGN.md)
     \\  vcl compile [--mixed] FILE     print JSON IR (one command per line; - reads stdin)
     \\  vcl serve [--port 8080] [--host 127.0.0.1] [--root viewer] [--assets DIR] [--lessons DIR]
     \\            [--no-figs] [--unsafe-figs]
@@ -137,11 +140,13 @@ fn check(io: Io, gpa: Allocator, arena: Allocator, env: *const std.process.Envir
     var computer: Computer = .{ .gpa = gpa, .io = io, .cfg = try fig.configure(arena, io, env) };
     var errors: usize = 0;
     var force_mixed = false;
-    for (args) |a| if (std.mem.eql(u8, a, "--mixed")) {
-        force_mixed = true;
-    };
+    var review = false;
+    for (args) |a| {
+        if (std.mem.eql(u8, a, "--mixed")) force_mixed = true;
+        if (std.mem.eql(u8, a, "--design")) review = true;
+    }
     for (args) |path| {
-        if (std.mem.eql(u8, path, "--mixed")) continue;
+        if (std.mem.eql(u8, path, "--mixed") or std.mem.eql(u8, path, "--design")) continue;
         const mode: vcl.Mode = if (force_mixed or std.mem.endsWith(u8, path, ".md")) .mixed else .vcl;
         const src = readSource(io, gpa, path) catch |err| {
             try out.print("{s}: cannot read: {s}\n", .{ path, @errorName(err) });
@@ -163,6 +168,14 @@ fn check(io: Io, gpa: Allocator, arena: Allocator, env: *const std.process.Envir
             defer d.deinit();
             if (std.mem.eql(u8, d.value.level, "error")) errors += 1;
             try out.print("{s}:{d}: {s}: {s}\n", .{ path, d.value.line, d.value.level, d.value.msg });
+        }
+        if (review) {
+            // How well it teaches (docs/LESSON-DESIGN.md): advice, not errors.
+            var arena_state = std.heap.ArenaAllocator.init(gpa);
+            defer arena_state.deinit();
+            for (try design.review(arena_state.allocator(), ir)) |f| {
+                if (f.line) |l| try out.print("{s}:{d}: design: {s}\n", .{ path, l, f.msg }) else try out.print("{s}: design: {s}\n", .{ path, f.msg });
+            }
         }
         try out.print("{s}: {d} commands\n", .{ path, cmds });
     }

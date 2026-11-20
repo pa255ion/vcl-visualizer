@@ -37,7 +37,9 @@ How to teach here:
 - A [viewer] message lists VCL lines that failed. Reply with only a \`\`\`vcl fence that redoes them correctly, with no prose.`;
 
 const PRIMER = readFileSync(path.join(here, '../../docs/PRIMER.md'), 'utf8');
-const SYSTEM = `${PERSONA}\n\n${PRIMER}`;
+// How to teach so it is remembered (retrieval, spacing, prediction, …), after how to draw.
+const DESIGN = readFileSync(path.join(here, '../../docs/LESSON-DESIGN.md'), 'utf8');
+const SYSTEM = `${PERSONA}\n\n${PRIMER}\n\n${DESIGN}`;
 
 const client = new Anthropic();
 const messages = []; // append-only conversation history (Anthropic.Beta.BetaMessageParam[])
@@ -147,7 +149,12 @@ function describeAnswer(a) {
   else if (a.kind === 'pick') what = `pointed at ${pick(a.given, a.ids)} (${a.correct ? 'right' : `wrong; right: ${pick(a.answer, a.ids)}`})`;
   else if (a.kind === 'estimate') what = `said ${a.given}${a.unit ? ` ${a.unit}` : ''} (${a.correct ? 'close enough' : 'off'}; the answer is ${a.answer})`;
   else what = a.correct ? 'says they knew it' : "says they didn't know it";
-  return `[answer] To your ${a.kind} "${a.q}", the learner ${what}. React in a sentence or two: confirm, or clear up the misunderstanding (draw if it helps), then go on.`;
+  const notes = [
+    a.predict ? 'it was a prediction before teaching (a wrong guess is fine)' : '',
+    a.confidence ? `they said they were ${{ guess: 'guessing', fairly: 'fairly sure', sure: 'sure' }[a.confidence]}` : '',
+    a.from ? `it reviewed lesson ${a.from}` : '',
+  ].filter(Boolean).join('; ');
+  return `[answer] To your ${a.kind} "${a.q}", the learner ${what}${notes ? ` (${notes})` : ''}. React in a sentence or two: confirm, or clear up the misunderstanding (draw if it helps), then go on.`;
 }
 
 // ───────────── turns ─────────────

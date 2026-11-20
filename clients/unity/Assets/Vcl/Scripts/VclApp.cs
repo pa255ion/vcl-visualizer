@@ -48,6 +48,7 @@ namespace Vcl
         XRNode? uiHand;
         bool wasBusy;
         string finishedNote = "";
+        string practiceNote; // set when a practice ends
         int stickSide;
         /// <summary>The tracked space: the camera moves in it, and it moves (move mode) in the world.</summary>
         public Transform Rig;
@@ -279,6 +280,12 @@ namespace Vcl
                 if (!(bool)a["skipped"]) Ambience?.Answer((bool)a["correct"]);
             };
             Runtime.OnBegin = SoundFor;
+            Runtime.OnPractice = (right, total) =>
+            {
+                practiceNote = "✓ Practice done" + (total > 0 ? $" · {right} of {total} right" : "");
+                Avatar.Hear(practiceNote, false, 8);
+                Log("info", practiceNote);
+            };
             Scenery = new Scenery(Classroom, Cam, sun, floor.gameObject);
             Scenery.Set(PlayerPrefs.GetString("vcl.scene", "night"));
             if (Application.isPlaying)
@@ -717,7 +724,12 @@ namespace Vcl
             // Playback, and once it ends, "finished" (with the score, if there were questions).
             var state = Runtime.State;
             bool busy = state != "idle";
-            if (!busy && wasBusy)
+            if (!busy && wasBusy && practiceNote != null)
+            {
+                finishedNote = practiceNote; // the practice's own score is showing
+                practiceNote = null;
+            }
+            else if (!busy && wasBusy)
             {
                 var (right, total) = Runtime.Score;
                 finishedNote = "✓ Finished" + (total > 0 ? $" · {right} of {total} right" : "");
@@ -728,7 +740,7 @@ namespace Vcl
             string play = state == "question" ? "<color=#7fe3ff>your turn: answer the question</color>"
                 : state == "paused" ? "<color=#ffa726>paused · B/Y to resume</color>"
                 : state == "waiting" ? "<color=#ffe066>step mode · trigger for next</color>"
-                : state == "playing" ? "playing"
+                : state == "playing" ? (Runtime.Practicing != null ? $"<color=#b58cff>practice · question {Runtime.Practicing.I + 1} of {Runtime.Practicing.Steps.Count}</color>" : "playing")
                 : finishedNote.Length > 0 ? $"<color=#66bb6a>{finishedNote}</color>" : "";
             Transcript.Status = play.Length > 0 ? play : "<color=#8796ab>ready</color>";
             string step = (Runtime.Stepping ? "  step mode" : "") + (reclined ? "  reclined" : "");

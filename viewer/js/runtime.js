@@ -226,13 +226,19 @@ export class Runtime {
   /** Right answers out of those given (skipped ones don't count). */
   get score() {
     let right = 0, total = 0;
-    for (const r of this.results.values()) if (!r.skipped) { total++; if (r.correct) right++; }
+    // Predictions (guesses before the teaching) don't count.
+    for (const [cmd, r] of this.results) if (!r.skipped && !cmd.predict) { total++; if (r.correct) right++; }
     return { right, total };
   }
 
   /** Skip the rest of this step (an open question counts as skipped) and play the next. */
   forward() {
     this.resume();
+    // Practice: forward skips this question (and goes on to the next one).
+    if (this.practicing && this.question) {
+      if (this.question.answered) this.question.onContinue(); else this.question.skip();
+      return true;
+    }
     const tl = this.timeline, now = this.now();
     if (tl.waiting && !tl.waiting.question) return tl.release(now);
     if (!tl.busy && !this.question) return false;
@@ -250,6 +256,7 @@ export class Runtime {
   /** Back to the start of this step if it has played a while, else the one before. */
   back() {
     if (!this.steps) return false;
+    this.practicing = null; // going back leaves practice for the lesson itself
     const into = this.now() - this.stepAt;
     this.seek(into > 3 || !this.step ? Math.max(1, this.step) : this.step - 1);
     return true;
@@ -268,6 +275,43 @@ export class Runtime {
     this.stepAt = this.now();
   }
 
+  /** The steps of this lesson's questions (predictions left out: they come before the teaching). */
+  get questionSteps() {
+    if (this.#qs?.n === this.history.length) return this.#qs.steps;
+    const steps = this.history.filter((h) => !h.instant && QUESTIONS.has(h.cmd.op) && !h.cmd.predict).map((h) => h.step);
+    this.#qs = { n: this.history.length, steps: [...new Set(steps)].sort((a, b) => a - b) };
+    return this.#qs.steps;
+  }
+  #qs = null;
+
+  /**
+   * Practice: only the lesson's questions, each with the board as it stands at
+   * that point, one after another; then the score (onPractice gets {done, right, total}).
+   */
+  practice() {
+    const steps = this.questionSteps;
+    if (!steps.length) return false;
+    this.practicing = { steps, i: 0, asked: new Set() };
+    this.resume();
+    this.voice?.stop();
+    this.seek(steps[0]);
+    return true;
+  }
+
+  endPractice() {
+    const p = this.practicing;
+    if (!p) return;
+    this.practicing = null;
+    this.closeQuestion();
+    this.timeline.queue = [];
+    this.timeline.active = [];
+    this.timeline.waiting = null;
+    let right = 0, total = 0;
+    for (const [cmd, r] of this.results) if (p.asked.has(cmd) && !r.skipped) { total++; if (r.correct) right++; }
+    this.practiceEnded = true; // the viewer shows this score, not the lesson's
+    this.onPractice?.({ done: true, right, total });
+  }
+
   /** Speak outside the timeline (the teacher's reaction to an answer). */
   speak(text) {
     const c = { op: 'say', text };
@@ -282,12 +326,16 @@ export class Runtime {
       done: (r) => {
         this.results.set(cmd, r);
         if (!r.skipped) {
-          const reaction = cmd.op === 'recall' ? (r.correct ? 'Good.' : 'That one is worth another look.') : r.correct ? 'Correct.' : 'Not quite.';
+          const reaction = cmd.predict ? (r.correct ? 'Good guess.' : "Not this time. Let's see why.")
+            : cmd.op === 'recall' ? (r.correct ? 'Good.' : 'That one is worth another look.') : r.correct ? 'Correct.' : 'Not quite.';
           this.speak(cmd.explain ? `${reaction} ${cmd.explain}` : reaction);
         }
         this.onAnswer?.({
           id: cmd.id ?? null, line: cmd.line, kind: cmd.op, q: cmd.q,
           given: r.given, correct: r.correct, skipped: r.skipped,
+          ...(r.confidence ? { confidence: r.confidence } : {}),
+          ...(cmd.predict ? { predict: true } : {}),
+          ...(cmd.from ? { from: cmd.from } : {}),
           ...(cmd.op === 'quiz' ? { options: cmd.options, answer: cmd.answer } : {}),
           ...(cmd.op === 'pick' ? { ids: cmd.ids, answer: cmd.answer } : {}),
           ...(cmd.op === 'estimate' ? { answer: cmd.answer, unit: cmd.unit } : {}),
@@ -298,6 +346,17 @@ export class Runtime {
         if (this.question !== card) return;
         this.closeQuestion();
         this.voice?.stop();
+        // Practice: on to the next question's board (or the end).
+        const p = this.practicing;
+        if (p) {
+          p.asked.add(cmd);
+          p.i++;
+          if (p.i < p.steps.length) {
+            const step = p.steps[p.i];
+            setTimeout(() => this.practicing === p && this.seek(step), 0);
+          } else setTimeout(() => this.endPractice(), 0);
+          return;
+        }
         // Open the gate (it may not be holding yet) and play the next step without another press.
         gate.gate = false;
         if (this.timeline.waiting === gate) this.timeline.release(this.now(), true);
@@ -373,6 +432,7 @@ export class Runtime {
     this.avatar?.point(null);
     this.step = 0;
     if (!keep) {
+      this.practicing = null;
       this.history = [];
       this.steps = 0;
       this.results.clear();

@@ -103,4 +103,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(quest_tests).step);
     const fig_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("core/src/fig.zig"), .target = target, .optimize = optimize }) });
     test_step.dependOn(&b.addRunArtifact(fig_tests).step);
+    const design_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("core/src/design.zig"), .target = target, .optimize = optimize }) });
+    test_step.dependOn(&b.addRunArtifact(design_tests).step);
 }

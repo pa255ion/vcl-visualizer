@@ -87,7 +87,9 @@ The **transcript** beside the board lists the lesson's sentences and questions
 (✓ right, ✗ wrong, – skipped), the current one marked. It has back, pause and
 forward buttons, and pointing at a line and pulling the trigger jumps there.
 It also shows when the lesson has **finished**, with the score if it asked
-questions; the teacher's subtitle says so too.
+questions; the teacher's subtitle says so too. **Practice** (top left of the
+transcript) replays just the lesson's questions, each with the board as it was
+then, and gives the score; ▶▶ skips a question.
 
 **Questions** (`quiz`, `pick`, `estimate`, `recall`) appear on a card in front
 of the board: point and pull the trigger to answer (for `pick`, at the

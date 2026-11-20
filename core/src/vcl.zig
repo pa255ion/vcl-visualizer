@@ -145,10 +145,11 @@ pub const ops = [_]Op{
     .{ .name = "board", .kind = .flow, .pos = &.{.{ .name = "size", .ty = .vec, .opt = true }}, .dur = 0.8 },
     .{ .name = "del", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0.3 },
     // questions for the learner: playback waits for the answer
-    .{ .name = "quiz", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "options", .ty = .str, .many = true, .min = 2, .max = 8 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .any_pin = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "estimate", .kind = .flow, .pos = &.{ P("q", .str), P("range", .range) }, .keys = &.{ P("answer", .num), P("tol", .num), P("step", .num), P("unit", .str), P("explain", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "recall", .kind = .flow, .pos = &.{ P("q", .str), P("answer", .str) }, .keys = &.{P("explain", .str)}, .dur = 0, .replay = false, .question = true },
+    // `predict=true`: a guess before the teaching (shown as such, not scored); `from="8.2"`: review of an earlier lesson.
+    .{ .name = "quiz", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "options", .ty = .str, .many = true, .min = 2, .max = 8 } }, .keys = &.{ P("answer", .nums), P("explain", .str), P("predict", .boolean), P("from", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .any_pin = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str), P("predict", .boolean), P("from", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "estimate", .kind = .flow, .pos = &.{ P("q", .str), P("range", .range) }, .keys = &.{ P("answer", .num), P("tol", .num), P("step", .num), P("unit", .str), P("explain", .str), P("predict", .boolean), P("from", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "recall", .kind = .flow, .pos = &.{ P("q", .str), P("answer", .str) }, .keys = &.{ P("explain", .str), P("from", .str) }, .dur = 0, .replay = false, .question = true },
     // 2D
     .{ .name = "pt", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{size}, .dur = 0.3 },
     .{ .name = "line", .kind = .draw, .pos = &.{ P("from", .point), P("to", .point) }, .keys = &.{ width, dash }, .dur = 0.6 },
@@ -273,6 +274,10 @@ const Entity = struct {
     parent: ?[]const u8, // owned by the names map (key of the parent)
     /// Pin names, comma-separated (owned; "" if none): `R1.a`, `cpu.clk`.
     ports: []const u8 = "",
+    /// Words it shows on the board (its text and label; owned; "" if none),
+    /// and whether it is faded out: a question's answer mustn't be readable there.
+    shown: []const u8 = "",
+    hidden: bool = false,
     /// Estimated board-space extent (x0, y0, x1, y1) of text, panels, blocks,
     /// waves and nodes placed at board coordinates; null when unknown or moved.
     box: ?[4]f64 = null,
@@ -372,7 +377,15 @@ pub const Scene = struct {
         for (s.names.keys(), s.names.values()) |k, e| {
             s.gpa.free(k);
             s.gpa.free(e.ports);
+            s.gpa.free(e.shown);
         }
+    }
+
+    fn setShown(s: *Scene, name: []const u8, text: []const u8) !void {
+        const e = s.names.getPtr(name) orelse return;
+        const t = try s.gpa.dupe(u8, text);
+        s.gpa.free(e.shown);
+        e.shown = t;
     }
 
     fn add(s: *Scene, name: []const u8, op: []const u8, parent: ?[]const u8, ports: []const u8) !void {
@@ -399,10 +412,11 @@ pub const Scene = struct {
             };
             i += 1;
         }
-        const ports = s.names.get(key).?.ports;
+        const gone = s.names.get(key).?;
         _ = s.names.orderedRemove(key);
         s.gpa.free(key);
-        s.gpa.free(ports);
+        s.gpa.free(gone.ports);
+        s.gpa.free(gone.shown);
     }
 
     fn setParent(s: *Scene, child: []const u8, parent: []const u8) void {
@@ -432,6 +446,12 @@ pub const Scene = struct {
         var arena_state = std.heap.ArenaAllocator.init(s.gpa);
         defer arena_state.deinit();
         const text = s.expand(arena_state.allocator(), raw) catch raw;
+        if (unroundedNumber(text)) |n| {
+            const msg = std.fmt.allocPrint(arena_state.allocator(), "round numbers for speech (\"{s}\" is hard to follow by ear: \"about …\")", .{n}) catch "";
+            try out.print("{{\"op\":\"diag\",\"level\":\"warning\",\"line\":{d},\"msg\":", .{line_no});
+            try writeJsonString(out, msg);
+            try out.writeAll("}\n");
+        }
         try out.print("{{\"op\":\"say\",\"line\":{d},\"par\":false,\"dur\":", .{line_no});
         try writeNum(out, speechDuration(text));
         try out.writeAll(",\"text\":");
@@ -473,6 +493,57 @@ fn dataNum(a: Allocator, out: *std.ArrayList(u8), f: f64) Allocator.Error!void {
         s = std.mem.trimEnd(u8, s, ".");
     }
     try out.appendSlice(a, s);
+}
+
+/// Does board text `hay` contain the answer `needle` (ignoring case and runs
+/// of spaces)? Numbers must stand alone ("36" isn't in "360").
+fn containsAnswer(hay: []const u8, needle: []const u8) bool {
+    const n = std.mem.trim(u8, needle, " \t\n.");
+    if (n.len == 0) return false;
+    var i: usize = 0;
+    while (i + n.len <= hay.len) : (i += 1) {
+        if (!std.ascii.eqlIgnoreCase(hay[i .. i + n.len], n)) continue;
+        const before = if (i > 0) hay[i - 1] else ' ';
+        const after = if (i + n.len < hay.len) hay[i + n.len] else ' ';
+        const numeric = std.ascii.isDigit(n[0]) or std.ascii.isDigit(n[n.len - 1]);
+        if (numeric and (std.ascii.isDigit(before) or before == '.' or std.ascii.isDigit(after) or (after == '.' and i + n.len + 1 < hay.len and std.ascii.isDigit(hay[i + n.len + 1])))) continue;
+        if (!numeric and (std.ascii.isAlphanumeric(before) or std.ascii.isAlphanumeric(after))) continue;
+        return true;
+    }
+    return false;
+}
+
+fn containsWord(hay: []const u8, w: []const u8) bool {
+    var it = std.mem.tokenizeAny(u8, hay, " \t\n,.?!:;'\"()");
+    while (it.next()) |t| if (std.ascii.eqlIgnoreCase(t, w)) return true;
+    return false;
+}
+
+fn isStopWord(w: []const u8) bool {
+    const stop = [_][]const u8{ "which", "what", "where", "when", "that", "this", "these", "those", "there", "their", "with", "from", "into", "does", "have", "most", "more", "less", "than", "then", "they", "them", "your", "point", "board", "show", "shows", "part", "one", "each", "about", "would", "could", "should" };
+    for (stop) |sw| if (std.ascii.eqlIgnoreCase(sw, w)) return true;
+    return false;
+}
+
+fn clip(s: []const u8, n: usize) []const u8 {
+    return if (s.len <= n) s else s[0..n];
+}
+
+/// Numbers with many decimals are hard to follow by ear: the first such, if any.
+fn unroundedNumber(text: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        if (!std.ascii.isDigit(text[i]) or (i > 0 and (std.ascii.isDigit(text[i - 1]) or text[i - 1] == '.'))) continue;
+        var j = i;
+        while (j < text.len and std.ascii.isDigit(text[j])) j += 1;
+        if (j + 1 < text.len and text[j] == '.' and std.ascii.isDigit(text[j + 1])) {
+            var k = j + 1;
+            while (k < text.len and std.ascii.isDigit(text[k])) k += 1;
+            if (k - j - 1 >= 3) return text[i..k];
+            i = k;
+        } else i = j;
+    }
+    return null;
 }
 
 fn speechDuration(text: []const u8) f64 {
@@ -718,6 +789,8 @@ const LineParser = struct {
         if (std.mem.eql(u8, op.name, "fig") and std.mem.trim(u8, fieldStr(fields.items, "code").?, " \t\r\n").len == 0)
             return p.fail("fig: the code is empty; put it in a <<END block: f: fig 0,0 python <<END … END", .{});
         if (std.mem.eql(u8, op.name, "say") and !hasKey(keyed.items, "dur")) dur = speechDuration(fields.items[0].val.str);
+        if (std.mem.eql(u8, op.name, "say")) if (unroundedNumber(fields.items[0].val.str)) |n|
+            try p.warn("say: round numbers for speech (\"{s}\" is hard to follow by ear: \"about …\")", .{n});
         if (std.mem.eql(u8, op.name, "board")) {
             var b = default_board;
             if (fields.items.len > 0) {
@@ -753,7 +826,12 @@ const LineParser = struct {
             p.scene.reset();
         } else if (op.kind == .change and !std.mem.eql(u8, op.name, "color") and !std.mem.eql(u8, op.name, "hl")) {
             // Moved, turned, scaled or faded: its old extent no longer holds.
-            if (p.scene.names.getPtr(fields.items[0].val.id)) |e| e.box = null;
+            if (p.scene.names.getPtr(fields.items[0].val.id)) |e| {
+                e.box = null;
+                if (std.mem.eql(u8, op.name, "fade")) e.hidden = fields.items[1].val.num < 0.1;
+            }
+            if (std.mem.eql(u8, op.name, "set")) if (fieldStr(fields.items, "text")) |t|
+                try p.scene.setShown(fields.items[0].val.id, t);
         } else if (std.mem.eql(u8, op.name, "del")) {
             for (fields.items[0].val.list) |v| p.scene.remove(v.id);
         } else if (id) |i| {
@@ -835,6 +913,28 @@ const LineParser = struct {
             if (derived) |d| ports = d.ports;
             if (box) |b| try p.lintOverlap(i, b);
             try p.scene.add(i, op.name, on, ports);
+            {
+                // What it shows in words (text, node, tex, code, table rows; and any label).
+                var words: std.ArrayList(u8) = .empty;
+                for (fields.items) |f| {
+                    const is_words = std.mem.eql(u8, f.name, "text") or std.mem.eql(u8, f.name, "label") or
+                        (std.mem.eql(u8, f.name, "rows") and !std.mem.eql(u8, op.name, "wave"));
+                    if (!is_words) continue;
+                    switch (f.val) {
+                        .str => |t| try words.appendSlice(p.arena, t),
+                        .list => |l| for (l) |v| if (v == .str) {
+                            try words.appendSlice(p.arena, v.str);
+                            try words.append(p.arena, '\n');
+                        },
+                        else => {},
+                    }
+                    try words.append(p.arena, '\n');
+                }
+                if (words.items.len > 0) try p.scene.setShown(i, words.items);
+                if (fieldVal(fields.items, "opacity")) |o| if (o == .num and o.num < 0.1) {
+                    p.scene.names.getPtr(i).?.hidden = true;
+                };
+            }
             if (std.mem.eql(u8, op.name, "axes")) p.scene.names.getPtr(i).?.axes = axesRanges(fields.items);
             if (box) |b| p.scene.names.getPtr(i).?.box = b;
             if (std.mem.eql(u8, op.name, "group"))
@@ -927,6 +1027,86 @@ const LineParser = struct {
             if (answer < r[0] or answer > r[1]) return p.fail("estimate: answer {d} is outside the slider's range {d}..{d}", .{ answer, r[0], r[1] });
             for (fields) |f| if (std.mem.eql(u8, f.name, "tol") and f.val.num < 0) return p.fail("estimate: tol must be >= 0", .{});
             for (fields) |f| if (std.mem.eql(u8, f.name, "step") and f.val.num <= 0) return p.fail("estimate: step must be > 0", .{});
+            // A guess lands in the middle (and the slider used to start there).
+            const span = r[1] - r[0];
+            if (span > 0 and @abs(answer - (r[0] + r[1]) / 2) < span * 0.08)
+                try p.warn("estimate: the answer sits in the middle of {d}..{d}, where a guess lands; shift or widen the range", .{ r[0], r[1] });
+        }
+        try p.lintQuestion(fields);
+    }
+
+    /// Advice on how well a question tests memory (docs/LESSON-DESIGN.md):
+    /// one fact per recall card, no giveaway option lengths, and above all no
+    /// answer left readable on the board.
+    fn lintQuestion(p: *LineParser, fields: anytype) Error!void {
+        const op = p.op.name;
+        const q = fieldStr(fields, "q") orelse "";
+        var needles: std.ArrayList([]const u8) = .empty; // texts that would give the answer away
+        if (std.mem.eql(u8, op, "recall")) {
+            const a = fieldStr(fields, "answer").?;
+            var words: usize = 0;
+            var it = std.mem.tokenizeAny(u8, a, " \t\n");
+            while (it.next()) |_| words += 1;
+            const recap = containsWord(q, "list") or containsWord(q, "recap") or containsWord(q, "summarise") or containsWord(q, "summarize");
+            if (words > 20 and !recap) try p.warn("recall: the answer has {d} words; one fact per card (about 20 words at most) keeps the self-rating honest: split it into cards", .{words});
+            try needles.append(p.arena, a);
+        }
+        if (std.mem.eql(u8, op, "estimate")) {
+            const a = fieldVal(fields, "answer").?.num;
+            var buf: std.ArrayList(u8) = .empty;
+            try dataNum(p.arena, &buf, a);
+            if (buf.items.len >= 2) try needles.append(p.arena, buf.items);
+        }
+        const answer: []const Value = if (fieldVal(fields, "answer")) |v| (if (v == .list) v.list else &.{}) else &.{};
+        if (std.mem.eql(u8, op, "quiz")) {
+            const opts = fieldVal(fields, "options").?.list;
+            var right_len: usize = 0;
+            var wrong_max: usize = 0;
+            for (opts, 1..) |o, k| {
+                const is_right = for (answer) |a| {
+                    if (a.num == @as(f64, @floatFromInt(k))) break true;
+                } else false;
+                if (is_right) {
+                    right_len = @max(right_len, o.str.len);
+                    if (o.str.len >= 4) try needles.append(p.arena, o.str);
+                } else wrong_max = @max(wrong_max, o.str.len);
+            }
+            if (answer.len == 1 and right_len > wrong_max + 15 and @as(f64, @floatFromInt(right_len)) > 1.4 * @as(f64, @floatFromInt(wrong_max)))
+                try p.warn("quiz: the right option is much the longest, and the longest is what a guess picks; even out their lengths", .{});
+        }
+        // Readable on the board right now?
+        for (needles.items) |n| {
+            for (p.scene.names.keys(), p.scene.names.values()) |id, e| {
+                if (e.hidden or e.shown.len == 0) continue;
+                if (containsAnswer(e.shown, n)) {
+                    return p.warn("{s}: its answer is on the board (\"{s}\" in {s}); fade it first (fade {s} 0), and back after", .{ op, clip(n, 40), id, id });
+                }
+            }
+        }
+        // pick: the right one labelled with a word the question uses, and no other is.
+        if (std.mem.eql(u8, op, "pick")) {
+            const ids = fieldVal(fields, "ids").?.list;
+            var qw = std.mem.tokenizeAny(u8, q, " \t\n,.?!:;'\"()");
+            while (qw.next()) |w| {
+                if (w.len < 4 or isStopWord(w)) continue;
+                var right_has = false;
+                var wrong_has = false;
+                var right_id: []const u8 = "";
+                for (ids, 1..) |v, k| {
+                    const base = v.id[0 .. std.mem.indexOfScalar(u8, v.id, '.') orelse v.id.len];
+                    const e = p.scene.names.get(base) orelse continue;
+                    if (e.hidden or !containsWord(e.shown, w)) continue;
+                    const is_right = for (answer) |a| {
+                        if (a.num == @as(f64, @floatFromInt(k))) break true;
+                    } else false;
+                    if (is_right) {
+                        right_has = true;
+                        right_id = base;
+                    } else wrong_has = true;
+                }
+                if (right_has and !wrong_has)
+                    return p.warn("pick: the right choice is labelled with \"{s}\", a word the question uses: that tests reading, not memory; fade its label first", .{w});
+            }
         }
     }
 
@@ -2944,6 +3124,45 @@ test "on=FIG: data coordinates of a figure from code" {
         \\{"op":"diag","level":"error","line":5,"msg":"pt: 't' is a text, not axes or fig"}
         \\
     );
+}
+
+test "question advice: answers on the board, giveaways, long cards" {
+    const got = try runLines(
+        \\t: text 0,3 "Ohm: V = I R"
+        \\q1: recall "State Ohm's law." "V = I R"
+        \\fade t 0
+        \\q2: recall "State Ohm's law." "V = I R"
+        \\n: text 0,2 "36% is the clock"
+        \\q3: estimate "Clock share?" 0..100 answer=36 unit="%"
+        \\q4: estimate "Clock share?" 0..1000 answer=360
+        \\q5: estimate "Middle?" 0..100 answer=52
+        \\a: node -3,0 "output layer"
+        \\b: node 3,0 "hidden"
+        \\q6: pick "Which is the output layer?" a b answer=1
+        \\q7: quiz "Why?" "Because the curvature across the valley is far larger than along it, so the step must suit the steep side" "Too small" "Too big" answer=1
+        \\q8: recall "Explain it." "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
+        \\q9: recall "List today's ideas." "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
+        \\say "It is 3.14159 metres."
+        \\say "About 3.1 metres, version 1.2.3 aside."
+    , .vcl);
+    defer testing.allocator.free(got);
+    const has = struct {
+        fn in(hay: []const u8, needle: []const u8) bool {
+            return std.mem.indexOf(u8, hay, needle) != null;
+        }
+    }.in;
+    errdefer std.debug.print("{s}", .{got});
+    try testing.expect(has(got, "\"line\":2,\"msg\":\"recall: its answer is on the board (\\\"V = I R\\\" in t)"));
+    try testing.expect(!has(got, "\"line\":4,\"msg\":\"recall: its answer")); // faded
+    try testing.expect(has(got, "\"line\":6,\"msg\":\"estimate: its answer is on the board (\\\"36\\\" in n)"));
+    try testing.expect(!has(got, "\"line\":7,\"msg\"")); // 360 isn't 36, and isn't in the middle
+    try testing.expect(has(got, "\"line\":8,\"msg\":\"estimate: the answer sits in the middle"));
+    try testing.expect(has(got, "\"line\":11,\"msg\":\"pick: the right choice is labelled with \\\"output\\\""));
+    try testing.expect(has(got, "\"line\":12,\"msg\":\"quiz: the right option is much the longest"));
+    try testing.expect(has(got, "\"line\":13,\"msg\":\"recall: the answer has 21 words"));
+    try testing.expect(!has(got, "\"line\":14,\"msg\"")); // a recap may be a list
+    try testing.expect(has(got, "\"line\":15,\"msg\":\"say: round numbers for speech (\\\"3.14159\\\""));
+    try testing.expect(!has(got, "\"line\":16,\"msg\":\"say: round"));
 }
 
 test "data: without anything to run the code, an error" {

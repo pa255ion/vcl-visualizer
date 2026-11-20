@@ -65,6 +65,16 @@ export function optionOrder(options, rand = Math.random) {
   return order.map((n) => (BY_PLACE.test(options[n - 1]) ? n : shuffled[k++]));
 }
 
+/** Where an estimate's slider starts: random, but not near the answer (or the middle). */
+export function startValue([lo, hi], answer, rand = Math.random) {
+  const span = hi - lo;
+  for (let i = 0; i < 20; i++) {
+    const v = lo + rand() * span;
+    if (Math.abs(v - answer) > span * 0.2 && Math.abs(v - (lo + hi) / 2) > span * 0.05) return v;
+  }
+  return Math.abs(lo - answer) > Math.abs(hi - answer) ? lo : hi;
+}
+
 /** Is this answer right? `given`: chosen numbers (quiz, pick), a value (estimate), or true/false (recall). */
 export function grade(cmd, given) {
   if (cmd.op === 'estimate') {
@@ -89,9 +99,12 @@ export class QuestionCard {
     this.multi = (cmd.op === 'quiz' || cmd.op === 'pick') && cmd.answer.length > 1;
     this.chosen = new Set();
     this.order = cmd.op === 'quiz' ? optionOrder(cmd.options) : null; // shown order; answers keep the author's numbers
-    this.value = cmd.op === 'estimate' ? (cmd.range[0] + cmd.range[1]) / 2 : null;
     this.step = cmd.op === 'estimate' ? cmd.step ?? niceStep(...cmd.range) : null;
-    if (this.value !== null) this.value = this.snap(this.value);
+    // The slider starts somewhere random (away from the answer), not in the middle
+    // where a guess would sit, and must be moved before Check.
+    this.value = cmd.op === 'estimate' ? this.snap(startValue(cmd.range, cmd.answer)) : null;
+    this.moved = false;
+    this.confidence = null; // 'guess' | 'fairly' | 'sure', if the learner says
     this.revealed = false; // recall: answer shown
     this.result = null;
     this.hits = [];
@@ -131,9 +144,11 @@ export class QuestionCard {
       return tp;
     };
 
-    const kind = { quiz: this.multi ? 'Choose every right answer' : 'Question', pick: this.multi ? 'Point at every right one on the board' : 'Point at it on the board', estimate: 'Estimate', recall: 'Recall' }[c.op];
+    let kind = { quiz: this.multi ? 'Choose every right answer' : 'Question', pick: this.multi ? 'Point at every right one on the board' : 'Point at it on the board', estimate: 'Estimate', recall: 'Recall' }[c.op];
+    if (c.predict) kind = `Guess first (not scored) · ${kind}`;
+    if (c.from) kind = `Review from ${c.from} · ${kind}`;
     const pick = c.op === 'pick';
-    text(kind.toUpperCase(), 0.24, C.muted);
+    text(kind.toUpperCase(), 0.24, c.predict ? '#ffe066' : c.from ? '#b58cff' : C.muted, x0, inner - 2.6); // clear of the drag grip
     y -= 0.12;
     text(c.q, 0.44, C.fg, x0, pick && !this.result ? inner - 2.2 : inner);
     y -= pick ? 0.15 : 0.3;
@@ -158,7 +173,7 @@ export class QuestionCard {
       y -= 1.0;
     } else if (c.op === 'recall') {
       if (!this.revealed) {
-        text('Think of the answer, then reveal it.', 0.3, C.muted);
+        text('Say the answer out loud, then reveal it.', 0.3, C.muted);
         y -= 0.2;
         this.button(body, x0, y, 3.4, 0.75, 'Show answer', () => { this.revealed = true; this.render(); });
         y -= 0.9;
@@ -172,7 +187,10 @@ export class QuestionCard {
     // Feedback, or the actions.
     y -= 0.1;
     if (res) {
-      const head = res.skipped ? 'Skipped' : res.correct ? (c.op === 'recall' ? '✓ Good' : '✓ Correct') : (c.op === 'recall' ? 'Worth another look' : '✗ Not quite');
+      const head = res.skipped ? 'Skipped'
+        : c.predict ? (res.correct ? '✓ Good guess' : 'Not this time: now let\'s see why')
+        : res.correct ? (c.op === 'recall' ? '✓ Good' : res.confidence === 'guess' ? '✓ Correct (a lucky guess? it will come back)' : '✓ Correct')
+        : c.op === 'recall' ? 'Worth another look' : res.confidence === 'sure' ? '✗ Not quite, though you were sure: worth remembering why' : '✗ Not quite';
       text(head, 0.42, res.skipped ? C.muted : res.correct ? C.okFg : C.errFg);
       if (c.op === 'estimate' && !res.skipped) text(`You said ${this.format(res.given)}; the answer is ${this.format(c.answer)}.`, 0.32, C.fg);
       if (c.explain) { y -= 0.1; text(c.explain, 0.34, C.fg); }
@@ -191,8 +209,25 @@ export class QuestionCard {
         this.button(body, x0, y, 3.4, 0.75, 'I knew it', () => this.finish(true), { bg: C.ok });
         this.button(body, x0 + 3.6, y, 3.4, 0.75, 'Not yet', () => this.finish(false), { bg: C.err });
       } else if (canCheck) {
+        if (this.hint) { text(this.hint, 0.28, '#ffe066'); y -= 0.15; }
+        // How sure? (optional): a sure mistake is the one most worth correcting.
+        if (!c.predict) {
+          text('How sure are you?', 0.26, C.muted);
+          y -= 0.08;
+          let cx = x0;
+          for (const [k, label] of [['guess', 'Guessing'], ['fairly', 'Fairly'], ['sure', 'Sure']]) {
+            const on = this.confidence === k;
+            this.button(body, cx, y, 2.1, 0.6, label, () => { this.confidence = on ? null : k; this.render(); }, { bg: on ? C.chosen : C.button, size: 0.28 });
+            cx += 2.25;
+          }
+          y -= 0.8;
+        }
         const ready = c.op === 'estimate' || this.chosen.size > 0;
-        this.button(body, x0, y, 2.6, 0.75, 'Check', ready ? () => this.finish(c.op === 'estimate' ? this.value : [...this.chosen]) : null, { bg: ready ? C.chosen : C.button });
+        const check = () => {
+          if (c.op === 'estimate' && !this.moved) { this.hint = 'Drag the slider to your estimate first.'; return this.render(); }
+          this.finish(c.op === 'estimate' ? this.value : [...this.chosen]);
+        };
+        this.button(body, x0, y, 2.6, 0.75, 'Check', ready ? check : null, { bg: ready ? C.chosen : C.button });
       }
       this.button(body, W / 2 - PAD - 1.9, y, 1.9, 0.75, 'Skip', () => this.skip(), { size: 0.3 });
       y -= 0.75;
@@ -300,6 +335,8 @@ export class QuestionCard {
     grab.position.copy(track.position);
     parent.add(grab);
     const set = (local) => {
+      this.moved = true;
+      this.hint = null;
       this.value = this.snap(lo + ((local.x - x) / w) * (hi - lo));
       knob.position.x = at(this.value);
       value.setText(this.format(this.value));
@@ -373,7 +410,7 @@ export class QuestionCard {
 
   finish(given) {
     if (this.result) return;
-    this.result = { given, correct: grade(this.cmd, given), skipped: false };
+    this.result = { given, correct: grade(this.cmd, given), skipped: false, confidence: this.confidence };
     this.render();
     this.done(this.result);
   }

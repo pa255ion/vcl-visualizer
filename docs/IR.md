@@ -70,12 +70,14 @@ A viewer posts each answer to a question (SPEC §4.10) to `POST /answer` as a
 JSON object; the server broadcasts it with `"op":"answer"`:
 
 ```json
-{"op":"answer","id":"q1","line":12,"kind":"quiz","q":"…","given":[1],"correct":false,"skipped":false,"options":["…","…"],"answer":[2]}
+{"op":"answer","id":"q1","line":12,"kind":"quiz","q":"…","given":[1],"correct":false,"skipped":false,"confidence":"sure","options":["…","…"],"answer":[2]}
 ```
 
 `given` is the chosen numbers (quiz, pick: 1-based), the value (estimate), or
 true/false (recall: "I knew it"); `null` when skipped. A pick answer carries
-`ids`, an estimate `answer` and `unit`. The tutor reacts to answers to the
+`ids`, an estimate `answer` and `unit`. `confidence` (`guess`, `fairly`,
+`sure`) is there if the learner said how sure they were; `predict: true` and
+`from` are copied from the question. The tutor reacts to answers to the
 questions it asked.
 
 ### Diagnostics

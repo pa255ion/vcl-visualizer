@@ -74,6 +74,15 @@ renders ahead of time; `tools/publish.sh` does that for the static copy.
 its variables as `{d.var}`, so VCL's own animated ops draw them (`path {d.curve}
 on=ax`). See `viewer/lessons/figures.vcl`.
 
+**Teaching that sticks:** `docs/LESSON-DESIGN.md` is how to write lessons
+people remember (retrieval before restating, a guess before teaching, a
+question every 1–2 minutes, review from older lessons, the learner's recap
+first); the tutor reads it after the primer. Questions take `predict=true` (a
+guess, not scored) and `from="8.2"` (review); the parser warns when a question
+gives its answer away, and `vcl check --design FILE…` reviews a whole lesson.
+**Practice** (in the playback dock; on the Quest, the transcript) replays just
+a lesson's questions, each with its board.
+
 Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
 go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then
 at `assets/<name>`, and the tutor tells Claude which ones exist.

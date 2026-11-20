@@ -7,6 +7,7 @@
 // data coordinates, mapped by that axes (AxesInfo.Map).
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using TMPro;
 using UnityEngine;
 
@@ -309,7 +310,8 @@ namespace Vcl
             get
             {
                 int right = 0, total = 0;
-                foreach (var r in Results.Values) if (!r.Skipped) { total++; if (r.Correct) right++; }
+                // Predictions (guesses before the teaching) don't count.
+                foreach (var kv in Results) if (!kv.Value.Skipped && !kv.Key.Bool("predict")) { total++; if (kv.Value.Correct) right++; }
                 return (right, total);
             }
         }
@@ -318,6 +320,8 @@ namespace Vcl
         public bool Forward()
         {
             Resume();
+            // Practice: forward skips this question (and goes on to the next one).
+            if (Practicing != null && Question != null) { Question.Skip(); return true; }
             if (Timeline.Waiting != null && !Timeline.Waiting.Question) return Timeline.Release(Now);
             if (!Timeline.Busy && Question == null) return false;
             if (Question != null && !Question.Answered) Question.Skip();
@@ -335,6 +339,7 @@ namespace Vcl
         public bool Back()
         {
             if (Steps == 0) return false;
+            Practicing = null; // going back leaves practice for the lesson itself
             double into = Now - stepAt;
             Seek(into > 3 || Step == 0 ? Math.Max(1, Step) : Step - 1);
             return true;
@@ -371,7 +376,8 @@ namespace Vcl
                 Results[cmd] = r;
                 if (!r.Skipped)
                 {
-                    string reaction = cmd.Op == "recall" ? (r.Correct ? "Good." : "That one is worth another look.") : r.Correct ? "Correct." : "Not quite.";
+                    string reaction = cmd.Bool("predict") ? (r.Correct ? "Good guess." : "Not this time. Let's see why.")
+                        : cmd.Op == "recall" ? (r.Correct ? "Good." : "That one is worth another look.") : r.Correct ? "Correct." : "Not quite.";
                     var explain = cmd.Str("explain");
                     Speak(explain != null ? reaction + " " + explain : reaction);
                 }
@@ -380,13 +386,23 @@ namespace Vcl
                     ["id"] = cmd.Id, ["line"] = (double)cmd.Line, ["kind"] = cmd.Op, ["q"] = cmd.Str("q"),
                     ["given"] = r.Given, ["correct"] = r.Correct, ["skipped"] = r.Skipped,
                 };
-                foreach (var k in new[] { "options", "ids", "answer", "unit" }) if (cmd.Has(k)) a[k] = cmd[k];
+                foreach (var k in new[] { "options", "ids", "answer", "unit", "predict", "from" }) if (cmd.Has(k)) a[k] = cmd[k];
+                if (r.Confidence != null) a["confidence"] = r.Confidence;
                 OnAnswer?.Invoke(a);
             }, () =>
             {
                 if (Question != card) return;
                 CloseQuestion();
                 Avatar?.Voice.Stop();
+                // Practice: on to the next question's board (or the end).
+                if (Practicing != null)
+                {
+                    var p = Practicing;
+                    p.Asked.Add(cmd);
+                    p.I++;
+                    pendingPractice = p.I < p.Steps.Count ? (Action)(() => { if (Practicing == p) Seek(p.Steps[p.I]); }) : EndPractice;
+                    return;
+                }
                 // Open the gate (it may not be holding yet) and play the next step without another press.
                 gate.Gate = false;
                 if (Timeline.Waiting == gate) Timeline.Release(Now, true);
@@ -394,6 +410,41 @@ namespace Vcl
                 if (q.Count > 0 && q[0].Gate && !q[0].Question) q[0].Gate = false;
             });
             Question = card;
+        }
+
+        // ── practice: the lesson's questions only, each with its board ──
+
+        public class PracticeRun { public List<int> Steps; public int I; public HashSet<Cmd> Asked = new HashSet<Cmd>(); }
+        public PracticeRun Practicing { get; private set; }
+        public Action<int, int> OnPractice; // (right, total) when a practice ends
+        Action pendingPractice; // run on the next update (not inside the card's callback)
+
+        /// <summary>The steps of this lesson's questions (predictions left out: they come before the teaching).</summary>
+        public List<int> QuestionSteps =>
+            History.Where(h => !h.instant && (h.cmd.Op == "quiz" || h.cmd.Op == "pick" || h.cmd.Op == "estimate" || h.cmd.Op == "recall") && !h.cmd.Bool("predict"))
+                .Select(h => h.step).Distinct().OrderBy(n => n).ToList();
+
+        public bool Practice()
+        {
+            var steps = QuestionSteps;
+            if (steps.Count == 0) return false;
+            Practicing = new PracticeRun { Steps = steps };
+            Resume();
+            Avatar?.Voice.Stop();
+            Seek(steps[0]);
+            return true;
+        }
+
+        public void EndPractice()
+        {
+            var p = Practicing;
+            if (p == null) return;
+            Practicing = null;
+            CloseQuestion();
+            Timeline.Reset();
+            int right = 0, total = 0;
+            foreach (var kv in Results) if (p.Asked.Contains(kv.Key) && !kv.Value.Skipped) { total++; if (kv.Value.Correct) right++; }
+            OnPractice?.Invoke(right, total);
         }
 
         public void CloseQuestion()
@@ -490,6 +541,7 @@ namespace Vcl
             Step = 0;
             if (!keep)
             {
+                Practicing = null;
                 History.Clear();
                 Steps = 0;
                 Results.Clear();
@@ -498,6 +550,7 @@ namespace Vcl
 
         public void Update(float dt)
         {
+            if (pendingPractice != null) { var a = pendingPractice; pendingPractice = null; a(); }
             Timeline.Tick(Now);
             Question?.Update(dt);
             dt = Paused ? 0 : dt * Speed;
