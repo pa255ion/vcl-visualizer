@@ -53,6 +53,15 @@ zig build run -- serve      # http://127.0.0.1:8080
 
 Open http://127.0.0.1:8080, click **Editor**, pick a lesson (or **Open…** a `.vcl`/`.md` file from your computer, or drop one on the editor), press **Run** (Ctrl+Enter). "wrap lines" soft-wraps long lines.
 
+The top bar's **Scene** menu picks the surroundings: Night (the plain dark room),
+Aero (bright sky, glossy platform, hills, clouds and soap bubbles), Tech (glowing
+grid, distant towers) or Demo (synthwave sun, scrolling grid, vector shapes).
+Each has its own generative music and background sound, and things being drawn
+make soft sounds in the music's key; the music dips while the teacher speaks.
+**Sound** switches between music + sounds, sounds only, and silent. Everything
+is synthesized (Web Audio, shaders): no audio or image files. `?scene=aero` in
+the URL picks a scene too.
+
 Files you want to show (SVG drawings, CAD exports as STL/OBJ, glTF models)
 go in `viewer/assets/`, or anywhere with `vcl serve --assets DIR`. They're then
 at `assets/<name>`, and the tutor tells Claude which ones exist.

@@ -280,7 +280,7 @@ refer to it.
 
 | Op | Arguments | Keys |
 |---|---|---|
-| `quiz` | `S S…` | multiple choice: the question, then 2–8 options (or a `<<END` block, an option per line). `answer=N` is the right option's number (1 is the first); `answer=1,3` when several are right (the learner then ticks every right one). `explain=S` |
+| `quiz` | `S S…` | multiple choice: the question, then 2–8 options (or a `<<END` block, an option per line). `answer=N` is the right option's number (1 is the first); `answer=1,3` when several are right (the learner then ticks every right one). The viewer shows the options in a random order, so write `explain` without letters; an option naming others by letter ("A and B", "only C") keeps the whole list in order, and one pointing by place ("all of the above", "none of these") stays where it is. `explain=S` |
 | `pick` | `S ID…` | the learner points at the right thing on the board: the question, then 2–12 entities, parts or pins (`n.L1`, `g.r2c3`, table rows `t.R2`, code lines `c.L3`, points `s.P3`, `f.E1`, part pins `R1.a`), each marked with a number. `answer=N` (or `N,N`) as for `quiz`. `explain=S` |
 | `estimate` | `S R` | a slider over the range: `answer=N` is the right value, `tol=N` how close counts as right (default 5% of the range), `step=N` the slider's step, `unit=S`. `explain=S` |
 | `recall` | `S S` | a flashcard: the prompt, then the answer, shown when the learner asks; they say themselves whether they knew it. `explain=S` |

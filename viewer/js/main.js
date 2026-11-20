@@ -7,6 +7,7 @@
 //   ?lesson=NAME                load lessons/NAME.vcl (or .md) and play it
 //   ?skip=1                     jump straight to the end state (screenshots)
 //   ?view=side                  desktop camera from the side (to see depth)
+//   ?scene=aero|tech|demo|night the surroundings (also the Scene menu)
 //
 // A published static copy (tools/publish.sh) has <html data-static>: it never
 // looks for a server and runs everything through the wasm parser.
@@ -19,6 +20,8 @@ import { Board } from './board.js';
 import { Transport } from './transport.js';
 import { Voice } from './voice.js';
 import { loadParser } from './vcl-wasm.js';
+import { Scenery, SCENES } from './scenery.js';
+import { Ambience } from './ambience.js';
 
 const params = new URLSearchParams(location.search);
 // Published copies load this module as main.js?v=<commit>; reuse that query
@@ -50,7 +53,8 @@ controls.target.copy(BOARD);
 controls.enableDamping = true;
 controls.update();
 
-scene.add(new THREE.HemisphereLight('#c8d8ff', '#1a1f2a', 1.3));
+const hemi = new THREE.HemisphereLight('#c8d8ff', '#1a1f2a', 1.3);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight('#ffffff', 1.8);
 sun.position.set(1.5, 4, 2);
 scene.add(sun);
@@ -67,6 +71,10 @@ const grid = new THREE.GridHelper(14, 28, '#1d2633', '#151c27');
 grid.position.y = 0.001;
 room.add(grid);
 scene.add(room);
+
+// The surroundings and their sound (Scene and Sound menus, remembered).
+const scenery = new Scenery({ scene, room, hemi, sun, camera });
+const ambience = new Ambience();
 
 // The board: a dark slate panel; `stage` is its coordinate system (board units).
 const stage = new THREE.Group();
@@ -238,6 +246,7 @@ async function stopAndClear() {
 runtime.onAnswer = (a) => {
   const what = a.skipped ? 'skipped' : a.correct ? 'right' : 'wrong';
   log('info', `answer (${a.kind}${a.id ? ` ${a.id}` : ''}): ${what}`);
+  if (!a.skipped) ambience.answer(a.correct);
   if (!transport?.connected) return;
   const base = serverUrl.replace(/^ws/, 'http').replace(/\/ws$/, '');
   fetch(`${base}/answer`, { method: 'POST', body: JSON.stringify(a) }).catch((e) => log('warning', `answer: ${e.message}`));
@@ -421,7 +430,54 @@ function wrappedLine(n) {
 }
 editor.addEventListener('scroll', () => markedLine && markLine(markedLine));
 editor.addEventListener('input', () => markLine(0)); // edited: the numbers no longer match
-runtime.onBegin = (t) => { if (t.cmd?.editorLine) markLine(t.cmd.editorLine); };
+runtime.onBegin = (t) => {
+  if (t.cmd?.editorLine) markLine(t.cmd.editorLine);
+  soundFor(t);
+};
+
+// ── scene and sound ──
+const POPS = new Set(['pt', 'node', 'box', 'sphere', 'cyl', 'model']);
+const FADES = new Set(['text', 'tex', 'title', 'img', 'svg', 'code', 'table', 'grid', 'bits', 'band']);
+const DRAWS = new Set(['line', 'arrow', 'path', 'poly', 'rect', 'circle', 'angle', 'edge', 'axes', 'plot', 'surf',
+  'part', 'wire', 'block', 'frame', 'wave', 'nn', 'bars', 'hist', 'scatter', 'errbar', 'contour']);
+let lastSound = 0;
+/** A soft sound for each thing that appears (not too many at once), and the music dips under speech. */
+function soundFor(t) {
+  const op = t.cmd?.op, secs = (t.dur ?? 0) / runtime.speed;
+  if (!op || secs < 0.05) return; // instant: replaying or skipping
+  if (op === 'say') { ambience.duck(secs); return; }
+  if (op === 'quiz' || op === 'pick' || op === 'estimate' || op === 'recall') { ambience.question(); return; }
+  const now = performance.now();
+  if (now - lastSound < 90) return;
+  if (DRAWS.has(op)) ambience.draw(secs);
+  else if (POPS.has(op)) ambience.pop();
+  else if (FADES.has(op)) ambience.fade();
+  else return;
+  lastSound = now;
+}
+const sceneSel = $('#scene');
+for (const [k, label] of Object.entries(SCENES)) sceneSel.add(new Option(label, k));
+let sceneName = params.get('scene');
+try { sceneName ??= localStorage.getItem('vcl.scene'); } catch {}
+sceneName = SCENES[sceneName] ? sceneName : 'night';
+function setScene(name) {
+  scenery.set(name);
+  ambience.setScene(name);
+  sceneSel.value = name;
+}
+setScene(sceneName);
+sceneSel.onchange = () => {
+  setScene(sceneSel.value);
+  try { localStorage.setItem('vcl.scene', sceneSel.value); } catch {}
+};
+const soundSel = $('#sound');
+try { const m = localStorage.getItem('vcl.sound'); if (m) soundSel.value = m; } catch {}
+ambience.setMode(soundSel.value);
+soundSel.onchange = () => {
+  ambience.setMode(soundSel.value);
+  ambience.start();
+  try { localStorage.setItem('vcl.sound', soundSel.value); } catch {}
+};
 
 function setting(id, key, def, onChange = () => {}) {
   const el = $(id);
@@ -495,10 +551,9 @@ async function xrButton(mode, el) {
     if (renderer.xr.isPresenting) { renderer.xr.getSession().end(); return; }
     const session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] });
     const ar = mode === 'immersive-ar';
-    scene.background = ar ? null : BG;
-    room.visible = !ar;
+    scenery.setAR(ar);
     boardMesh.material.opacity = ar ? 0.8 : 0.96;
-    session.addEventListener('end', () => { scene.background = BG; room.visible = true; boardMesh.material.opacity = 0.96; });
+    session.addEventListener('end', () => { scenery.setAR(false); boardMesh.material.opacity = 0.96; });
     await renderer.xr.setSession(session);
   };
 }
@@ -667,10 +722,11 @@ renderer.setAnimationLoop(() => {
   else readControllers(dt);
   pointer.update();
   runtime.update(dt);
+  scenery.update(dt);
   showPlayState();
   avatar.update(dt, renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   renderer.render(scene, camera);
 });
 
 // Exposed for debugging from the console.
-Object.assign(window, { runtime, run, scene, camera, board, THREE });
+Object.assign(window, { runtime, run, scene, camera, board, THREE, scenery, ambience });

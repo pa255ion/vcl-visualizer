@@ -11,7 +11,7 @@ canvas { display: block; }
 #bar { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px;
   padding: 10px 14px; pointer-events: none; }
 #bar > * { pointer-events: auto; }
-.brand { font-weight: 800; letter-spacing: .08em; color: var(--accent); }
+.brand { font-weight: 800; letter-spacing: .08em; color: var(--accent); text-shadow: 0 0 6px #000a, 0 1px 2px #000c; }
 .spacer { flex: 1; }
 #status { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
 #status::before { content: "●"; margin-right: 6px; color: var(--warn); }

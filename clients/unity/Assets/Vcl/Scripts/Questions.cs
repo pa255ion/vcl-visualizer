@@ -5,6 +5,7 @@
 // rays (or the mouse) against. After the answer the card shows what was right
 // and `explain=`, and Continue lets the lesson go on.
 using System;
+using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using System.Linq;
 using TMPro;
@@ -89,9 +90,32 @@ namespace Vcl
                 step = cmd.Num("step", NiceStep(r[0], r[1]));
                 value = Snap((r[0] + r[1]) / 2);
             }
+            if (cmd.Op == "quiz") order = OptionOrder(Strings("options"));
             root = Draw.Child(rt.Stage, "question").transform;
             if (cmd.Op == "pick") badges = Draw.Child(rt.Stage, "question badges").transform;
             Render();
+        }
+
+        // Options that name others by letter ("A and B", "only C") keep the author's
+        // order; ones that point by position ("all of the above") stay put while the
+        // rest are shuffled. Answers keep the author's numbers either way.
+        static readonly Regex ByLetter = new Regex(@"\b(?:both|either|neither|only|options?|answers?|choices?)\s+[A-H]\b|\b[A-H]\s*(?:,|&|\+|\band\b|\bor\b|\bnor\b)\s*[A-H]\b");
+        static readonly Regex ByPlace = new Regex(@"\b(?:all|none|both|neither|either|any)\b.*\b(?:above|below|these|those|the others|options|answers|choices)\b", RegexOptions.IgnoreCase);
+        List<int> order;
+
+        /// <summary>The order to show quiz options in (1-based option numbers).</summary>
+        public static List<int> OptionOrder(List<string> options)
+        {
+            var order = Enumerable.Range(1, options.Count).ToList();
+            if (options.Any(o => ByLetter.IsMatch(o ?? ""))) return order;
+            var free = order.Where(n => !ByPlace.IsMatch(options[n - 1] ?? "")).ToList();
+            for (int i = free.Count - 1; i > 0; i--)
+            {
+                int j = UnityEngine.Random.Range(0, i + 1);
+                (free[i], free[j]) = (free[j], free[i]);
+            }
+            int k = 0;
+            return order.Select(n => ByPlace.IsMatch(options[n - 1] ?? "") ? n : free[k++]).ToList();
         }
 
         List<int> Answer => (Cmd.List("answer") ?? new List<object>()).Select(o => (int)(double)o).ToList();
@@ -191,10 +215,10 @@ namespace Vcl
                 var opts = Strings("options");
                 for (int i = 0; i < opts.Count; i++)
                 {
-                    int n = i + 1;
+                    int n = order[i];
                     bool right = answer.Contains(n), picked = res != null ? Given(res).Contains(n) : chosen.Contains(n);
                     string mark = res != null ? (right ? "✓" : picked ? "✗" : " ") : multi ? (picked ? "☑" : "☐") : ((char)('A' + i)).ToString();
-                    var label = Wrap($"{mark}   {opts[i]}", CharsFor(Inner - 0.5f, TextH));
+                    var label = Wrap($"{mark}   {opts[n - 1]}", CharsFor(Inner - 0.5f, TextH));
                     int lines = label.Split('\n').Length;
                     float h = lines * TextH * 1.25f + 0.3f;
                     var bg = res != null ? (right ? Ok : picked ? Err : ButtonC) : picked ? Chosen : ButtonC;

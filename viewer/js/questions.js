@@ -44,6 +44,27 @@ export function niceStep(lo, hi) {
 }
 const decimals = (step) => Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
 
+// Options that name other options by letter ("A and B", "both B and C",
+// "only A") keep the whole list in the author's order; ones that point by
+// position ("all of the above", "none of these") stay where they are while
+// the rest are shuffled.
+const BY_LETTER = /\b(?:both|either|neither|only|options?|answers?|choices?)\s+[A-H]\b|\b[A-H]\s*(?:,|&|\+|\band\b|\bor\b|\bnor\b)\s*[A-H]\b/;
+const BY_PLACE = /\b(?:all|none|both|neither|either|any)\b.*\b(?:above|below|these|those|the others|options|answers|choices)\b/i;
+
+/** The order to show quiz options in: a list of option numbers (1-based). */
+export function optionOrder(options, rand = Math.random) {
+  const order = options.map((_, i) => i + 1);
+  if (options.some((o) => BY_LETTER.test(o))) return order;
+  const free = order.filter((n) => !BY_PLACE.test(options[n - 1]));
+  const shuffled = [...free];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  let k = 0;
+  return order.map((n) => (BY_PLACE.test(options[n - 1]) ? n : shuffled[k++]));
+}
+
 /** Is this answer right? `given`: chosen numbers (quiz, pick), a value (estimate), or true/false (recall). */
 export function grade(cmd, given) {
   if (cmd.op === 'estimate') {
@@ -67,6 +88,7 @@ export class QuestionCard {
     this.onContinue = onContinue;
     this.multi = (cmd.op === 'quiz' || cmd.op === 'pick') && cmd.answer.length > 1;
     this.chosen = new Set();
+    this.order = cmd.op === 'quiz' ? optionOrder(cmd.options) : null; // shown order; answers keep the author's numbers
     this.value = cmd.op === 'estimate' ? (cmd.range[0] + cmd.range[1]) / 2 : null;
     this.step = cmd.op === 'estimate' ? cmd.step ?? niceStep(...cmd.range) : null;
     if (this.value !== null) this.value = this.snap(this.value);
@@ -118,8 +140,8 @@ export class QuestionCard {
 
     const res = this.result;
     if (c.op === 'quiz') {
-      c.options.forEach((opt, i) => {
-        const n = i + 1, right = c.answer.includes(n), picked = res ? res.given.includes(n) : this.chosen.has(n);
+      this.order.forEach((n, i) => {
+        const opt = c.options[n - 1], right = c.answer.includes(n), picked = res ? res.given.includes(n) : this.chosen.has(n);
         const mark = res ? (right ? '✓' : picked ? '✗' : ' ') : this.multi ? (picked ? '☑' : '☐') : String.fromCharCode(65 + i);
         const label = wrap(`${mark}   ${opt}`, charsFor(inner - 0.5, TEXT));
         const lines = label.split('\n').length;
