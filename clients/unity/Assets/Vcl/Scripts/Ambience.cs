@@ -84,7 +84,7 @@ namespace Vcl
         public void SetEffectsVolume(float v) { EffectsVolume = Mathf.Clamp01(v); Post(() => fxVol = EffectsVolume); }
         public void DrawSound(float secs) => Post(() => DoDraw(secs));
         public void Pop() => Post(DoPop);
-        public void Fade() => Post(() => { if (fxVol > 0.005f) BellVoice(ChordNote(2), 0.016f, 3.5f, Bus.Fx); });
+        public void Fade() => Post(() => { if (fxVol > 0.005f) voices.Add(new NoiseBurst(this, 0.5f, 2600, 4200, 0.8f, 0.006f)); });
         public void Question() => Post(DoQuestion);
         public void Answer(bool correct) => Post(() => DoAnswer(correct));
         public void Duck(float secs) => Post(() => duckUntil = time + Math.Max(0.3, secs));
@@ -223,21 +223,20 @@ namespace Vcl
 
         // ── sounds for the board ──
 
+        // Board sounds sit well under the music: a soft pen stroke, a felt tap, a
+        // breath of air (Fade). No ringing tones, no echo.
         void DoDraw(float secs)
         {
             if (fxVol <= 0.005f) return;
             float d = Mathf.Clamp(secs, 0.25f, 2.5f);
-            float lo = Scene == "demo" ? 2000 : Scene == "tech" ? 1500 : 900;
-            voices.Add(new NoiseBurst(this, d, lo, lo * 2.2f, 3, Scene == "aero" ? 0.022f : 0.018f));
-            var w = Scene == "demo" ? Wave.Square : Scene == "tech" ? Wave.Saw : Wave.Triangle;
-            voices.Add(new Tone(this, ChordNote(1), w, 0.15f, 0.04f, 2200, 0.005f, 0.6f, Bus.Fx) { Delay = Scene != "night" });
-            if (d > 1) voices.Add(new Tone(this, ChordNote(2), Wave.Sine, 0.1f, 0.025f, 4000, 0.01f, 0.8f, Bus.Fx) { StartAt = time + d - 0.1 });
+            voices.Add(new NoiseBurst(this, d, 650, 1300, 1.2f, 0.008f));
+            voices.Add(new Tone(this, ChordNote(0), Wave.Sine, 0.03f, 0.018f, 900, 0.004f, 0.18f, Bus.Fx));
         }
 
         void DoPop()
         {
             if (fxVol <= 0.005f) return;
-            voices.Add(new Tone(this, ChordNote(1), Wave.Sine, 0.06f, 0.05f, 4000, 0.003f, 0.25f, Bus.Fx) { Glide = -12 });
+            voices.Add(new Tone(this, ChordNote(0), Wave.Sine, 0.03f, 0.022f, 1200, 0.003f, 0.15f, Bus.Fx) { Glide = -7 });
         }
 
         void DoQuestion()

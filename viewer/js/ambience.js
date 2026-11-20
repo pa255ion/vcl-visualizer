@@ -369,29 +369,27 @@ export class Ambience {
     return n + 12 * up;
   }
 
-  /** Something being drawn for `secs`: a soft pen sweep, and a pluck from the chord. */
+  // Board sounds sit well under the music: a soft pen stroke, a felt tap, a
+  // breath of air. No ringing tones, no echo.
+
+  /** Something being drawn for `secs`: a pencil-soft sweep and a muted tap from the chord. */
   draw(secs) {
     if (!this.ready()) return;
     const t = this.ctx.currentTime, d = Math.min(Math.max(secs, 0.25), 2.5);
-    const scene = this.scene;
-    const lo = scene === 'demo' ? 2000 : scene === 'tech' ? 1500 : 900, hi = lo * 2.2;
-    this.noiseBurst(t, d, { from: lo, to: hi, q: 3, gain: scene === 'aero' ? 0.022 : 0.018 });
-    const type = scene === 'demo' ? 'square' : scene === 'tech' ? 'sawtooth' : 'triangle';
-    this.tone(t, this.chordNote(1), { type, dur: 0.15, gain: 0.04, cutoff: 2200, attack: 0.005, release: 0.6, delay: scene !== 'night' });
-    if (d > 1) this.tone(t + d - 0.1, this.chordNote(2), { type: 'sine', dur: 0.1, gain: 0.025, release: 0.8 });
+    this.noiseBurst(t, d, { from: 650, to: 1300, q: 1.2, gain: 0.008 });
+    this.tone(t, this.chordNote(0), { type: 'sine', dur: 0.03, gain: 0.018, cutoff: 900, attack: 0.004, release: 0.18 });
   }
 
-  /** Something popping into place. */
+  /** Something popping into place: a low, soft tap. */
   pop() {
     if (!this.ready()) return;
-    const t = this.ctx.currentTime;
-    this.tone(t, this.chordNote(1), { type: 'sine', dur: 0.06, gain: 0.05, attack: 0.003, release: 0.25, glide: -12 });
+    this.tone(this.ctx.currentTime, this.chordNote(0), { type: 'sine', dur: 0.03, gain: 0.022, cutoff: 1200, attack: 0.003, release: 0.15, glide: -7 });
   }
 
-  /** Something fading in: a quiet bell. */
+  /** Something fading in: a faint breath of air. */
   fade() {
     if (!this.ready()) return;
-    this.bell(this.ctx.currentTime, this.chordNote(2), 0.016, 3.5, this.fx);
+    this.noiseBurst(this.ctx.currentTime, 0.5, { from: 2600, to: 4200, q: 0.8, gain: 0.006 });
   }
 
   /** A question appears. */
