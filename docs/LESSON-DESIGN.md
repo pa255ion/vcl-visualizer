@@ -242,7 +242,7 @@ the talk, which is why the key ideas need to be in questions.
 ## Checking a lesson
 
 `vcl check` already warns about the commonest question problems: an answer
-readable on the board when the question is asked (fade it first; formulas
+readable on the board when the question is asked (hide it with `hide=ID` on the question, which brings it back afterwards; formulas
 match however they are spaced, and a recall answer whose key words are mostly
 on one board text counts too; a one- or two-digit estimate among a table's
 numbers doesn't), a `pick`

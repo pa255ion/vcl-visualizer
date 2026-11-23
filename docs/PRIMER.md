@@ -87,7 +87,7 @@ pick "Which one is the output layer?" n.L0 n.L1 n.L2 answer=3                  l
 estimate "Roughly what is e?" 2..3.5 answer=2.718 tol=0.05 unit="…"             slider
 recall "State Ohm's law." "V = I R"                                              flashcard; learner rates themselves
 ```
-Add `predict=true` to a guess asked before you teach it (not scored), and `from="8.2"` to a review question from an earlier lesson. Name every question `q<lesson>_<n>` and never rename it (its name carries the learner's answer history). Fade any board text that gives the answer away before asking (the parser warns).
+Add `predict=true` to a guess asked before you teach it (not scored), and `from="8.2"` to a review question from an earlier lesson. Name every question `q<lesson>_<n>` and never rename it (its name carries the learner's answer history). Hide any board text that gives the answer away with `hide=t,g` on the question: hidden while it's asked, back after (the parser warns about leaks).
 Ask one after explaining something important, to check it landed, not after every point. Make wrong options plausible (common misconceptions). Keep `explain=` short; it is shown and spoken after the answer.
 
 **Good habits**

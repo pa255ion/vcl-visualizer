@@ -162,6 +162,7 @@ export class Runtime {
     this.voice = voice;
     this.log = log;
     this.entities = new Map();
+    this.hiddenForQuestion = []; // entities a question's hide= hid
     this.figBase = 'figs/'; // where rendered figures (`fig`) are: the server's /figs/, or the static copy's
     this.timeline = new Timeline((e, t) => this.log('error', `line ${t.cmd?.line ?? '?'}: ${t.cmd?.op}: ${e.message}`));
     this.timeline.onBegin = (t) => {
@@ -322,8 +323,14 @@ export class Runtime {
 
   ask(cmd, gate) {
     this.closeQuestion();
+    // hide=: board things that would give the answer away, hidden until it's answered.
+    for (const id of cmd.hide ?? []) {
+      const e = this.entities.get(id);
+      if (e?.obj.visible) { e.obj.visible = false; this.hiddenForQuestion.push(e); }
+    }
     const card = new QuestionCard(this, cmd, {
       done: (r) => {
+        this.unhide();
         this.results.set(cmd, r);
         if (!r.skipped) {
           const reaction = cmd.predict ? (r.correct ? 'Good guess.' : "Not this time. Let's see why.")
@@ -368,8 +375,15 @@ export class Runtime {
   }
 
   closeQuestion() {
+    this.unhide();
     this.question?.dispose();
     this.question = null;
+  }
+
+  /** Bring back what a question's hide= hid. */
+  unhide() {
+    for (const e of this.hiddenForQuestion) if (this.entities.get(e.id) === e) e.obj.visible = true;
+    this.hiddenForQuestion = [];
   }
 
   /** Everything the learner can press on the board right now. */
@@ -677,7 +691,10 @@ H.group = function (c) {
 
 H.move = function (c) {
   return this.change(c, (e) => {
-    const dest = e.toParent(c.to);
+    // on=AX: `to` is in those axes' (or a figure's) data coordinates.
+    const on = c.on && !isRef(c.to) ? this.get(c.on) : null;
+    const dest = on ? e.parentObj.worldToLocal(on.obj.localToWorld(on.axes ? on.axes.map(V(c.to)) : new THREE.Vector3()))
+      : e.toParent(c.to);
     const center = e.parentObj.worldToLocal(this.anchorWorld(e, 'center'));
     const from = e.obj.position.clone();
     const to = from.clone().add(dest.sub(center));
@@ -739,11 +756,32 @@ H.set = function (c) {
     return (p, raw) => parts.forEach((t) => t.update(p, raw));
   });
 };
+/** A glow over a pin for hl: the whole row of a table or code panel, or a ring. Removed by the returned function. */
+function pinGlow(e, name, color) {
+  const pin = e.pins?.[name];
+  if (!pin) return null;
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false });
+  const geo = pin.row ? new THREE.PlaneGeometry(pin.row.w, pin.row.h) : new THREE.RingGeometry(0.16, 0.26, 32);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pin.at);
+  if (pin.row) mesh.position.x -= pin.row.w / 2;
+  mesh.position.z += 0.02;
+  mesh.renderOrder = 15;
+  (pin.row ? e.body : e.obj).add(mesh);
+  return { mat, peak: pin.row ? 0.35 : 0.9, remove: () => { mesh.removeFromParent(); geo.dispose(); mat.dispose(); } };
+}
+
 H.hl = function (c) {
   let us = [];
   return {
     begin: () => {
       us = c.ids.map((id) => {
+        const dot = id.indexOf('.'), e = dot > 0 ? this.get(id.slice(0, dot)) : null;
+        if (e && !e.parts?.[id.slice(dot + 1)] && e.pins?.[id.slice(dot + 1)]) {
+          // A pin (a table row t.R2, a code line, a part's pin): a glow that pulses there.
+          const g = pinGlow(e, id.slice(dot + 1), c.color ?? '#ffe066');
+          return (raw) => { g.mat.opacity = g.peak * Math.sin(Math.PI * raw); if (raw >= 1) g.remove(); };
+        }
         const t = this.target(id);
         const from = t.mats.map((m) => m.color.clone());
         const hl = new THREE.Color(c.color ?? '#ffe066');
@@ -1228,9 +1266,10 @@ BUILD.axes = function (e, c) {
   });
   tickStroke.set(ticks);
   gridStroke.set(grid);
-  const lx = c.xlabel ?? 'x', ly = c.ylabel ?? 'y', lz = c.zlabel ?? 'z';
-  label(lx, P(xr[1], o.y).add(new THREE.Vector3(0.35, 0, 0)), 'left', 0.34, FG);
-  label(ly, P(o.x, yr[1]).add(is3 ? new THREE.Vector3(0, 0, -0.35) : new THREE.Vector3(0, 0.35, 0)), 'center', 0.34, FG);
+  // The default "x"/"y" names a numeric axis; without its ticks (categories, rows, a bare line) it goes too.
+  const lx = c.xlabel ?? (showXTicks ? 'x' : ''), ly = c.ylabel ?? (showYTicks ? 'y' : ''), lz = c.zlabel ?? 'z';
+  if (lx.trim()) label(lx, P(xr[1], o.y).add(new THREE.Vector3(0.35, 0, 0)), 'left', 0.34, FG);
+  if (ly.trim()) label(ly, P(o.x, yr[1]).add(is3 ? new THREE.Vector3(0, 0, -0.35) : new THREE.Vector3(0, 0.35, 0)), 'center', 0.34, FG);
   if (is3) label(lz, P(o.x, o.y, zr[1]).add(new THREE.Vector3(0, 0.35, 0)), 'center', 0.34, FG);
 
   e.render = (p) => {
@@ -1560,7 +1599,10 @@ function panelEntity(e, c, draw, rowsOf, prefix, defaultSize) {
     e.pins = {};
     const H = tp.height, W = tp.width;
     rowY(canvas).forEach((ypx, i) => {
-      e.pins[`${prefix}${i + 1}`] = { at: new THREE.Vector3(W / 2, H / 2 - (ypx / canvas.height) * H, 0), dir: new THREE.Vector3(1, 0, 0) };
+      e.pins[`${prefix}${i + 1}`] = {
+        at: new THREE.Vector3(W / 2, H / 2 - (ypx / canvas.height) * H, 0), dir: new THREE.Vector3(1, 0, 0),
+        row: { w: W, h: (lineHeightPx / canvas.height) * H }, // the row's band, for hl
+      };
     });
   };
   redraw();
@@ -1685,7 +1727,7 @@ BUILD.svg = function (e, c) {
       const res = await fetch(c.src);
       markup = await res.text();
       if (!res.ok && c.op === 'fig') throw new Error(res.status === 404 && !markup.startsWith('figure')
-        ? "not rendered: figures from code need `vcl serve` (a published copy has only its own lessons' figures)" : markup.trim());
+        ? "not rendered here: figures from code need `vcl serve` run inside `nix develop`, or `vcl figs FILE` before publishing (a published copy has only its own lessons' figures)" : markup.trim());
       if (!res.ok) throw new Error(`${c.src}: ${markup.trim().slice(0, 200) || res.status}`);
     }
     const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');

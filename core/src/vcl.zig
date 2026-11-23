@@ -23,7 +23,7 @@ pub const version = "0.1";
 
 /// Bumped whenever figure rendering changes (the style sheet, the output), so
 /// cached figures from before are not reused: it seeds every figure's key.
-pub const fig_version: u64 = 1;
+pub const fig_version: u64 = 2;
 
 /// A `fig`'s key: a hash of its language and code. The rendered figure is
 /// `figs/<key>.svg` (and `.png` for clients that can't draw every SVG), both
@@ -146,10 +146,10 @@ pub const ops = [_]Op{
     .{ .name = "del", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0.3 },
     // questions for the learner: playback waits for the answer
     // `predict=true`: a guess before the teaching (shown as such, not scored); `from="8.2"`: review of an earlier lesson.
-    .{ .name = "quiz", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "options", .ty = .str, .many = true, .min = 2, .max = 8 } }, .keys = &.{ P("answer", .nums), P("explain", .str), P("predict", .boolean), P("from", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .any_pin = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str), P("predict", .boolean), P("from", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "estimate", .kind = .flow, .pos = &.{ P("q", .str), P("range", .range) }, .keys = &.{ P("answer", .num), P("tol", .num), P("step", .num), P("unit", .str), P("explain", .str), P("predict", .boolean), P("from", .str) }, .dur = 0, .replay = false, .question = true },
-    .{ .name = "recall", .kind = .flow, .pos = &.{ P("q", .str), P("answer", .str) }, .keys = &.{ P("explain", .str), P("from", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "quiz", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "options", .ty = .str, .many = true, .min = 2, .max = 8 } }, .keys = &.{ P("answer", .nums), P("explain", .str), P("predict", .boolean), P("from", .str), P("hide", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "pick", .kind = .flow, .pos = &.{ P("q", .str), .{ .name = "ids", .ty = .id, .many = true, .part = true, .any_pin = true, .min = 2, .max = 12 } }, .keys = &.{ P("answer", .nums), P("explain", .str), P("predict", .boolean), P("from", .str), P("hide", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "estimate", .kind = .flow, .pos = &.{ P("q", .str), P("range", .range) }, .keys = &.{ P("answer", .num), P("tol", .num), P("step", .num), P("unit", .str), P("explain", .str), P("predict", .boolean), P("from", .str), P("hide", .str) }, .dur = 0, .replay = false, .question = true },
+    .{ .name = "recall", .kind = .flow, .pos = &.{ P("q", .str), P("answer", .str) }, .keys = &.{ P("explain", .str), P("from", .str), P("hide", .str) }, .dur = 0, .replay = false, .question = true },
     // 2D
     .{ .name = "pt", .kind = .draw, .pos = &.{P("at", .point)}, .keys = &.{size}, .dur = 0.3 },
     .{ .name = "line", .kind = .draw, .pos = &.{ P("from", .point), P("to", .point) }, .keys = &.{ width, dash }, .dur = 0.6 },
@@ -212,7 +212,7 @@ pub const ops = [_]Op{
     .{ .name = "cyl", .kind = .draw, .pos = &.{ P("from", .point), P("to", .point), P("r", .num) }, .keys = &.{wire}, .dur = 0.6 },
     .{ .name = "model", .kind = .draw, .pos = &.{ P("at", .point), P("url", .str) }, .keys = &.{size}, .dur = 0.8 },
     // change
-    .{ .name = "move", .kind = .change, .pos = &.{ P("target", .id), P("to", .point) }, .dur = 0.6 },
+    .{ .name = "move", .kind = .change, .pos = &.{ P("target", .id), P("to", .point) }, .keys = &.{on_key}, .dur = 0.6 },
     .{ .name = "rot", .kind = .change, .pos = &.{ P("target", .id), P("rot", .vec) }, .dur = 0.6 },
     .{ .name = "scale", .kind = .change, .pos = &.{ P("target", .id), P("scale", .num) }, .dur = 0.5 },
     .{ .name = "color", .kind = .change, .pos = &.{ part_target, P("color", .color) }, .dur = 0.4 },
@@ -221,7 +221,7 @@ pub const ops = [_]Op{
         P("pos", .point), P("rot", .vec), P("scale", .num), P("color", .color), P("opacity", .num), P("text", .str),
         P("focus", .range),
     }, .dur = 0.5 },
-    .{ .name = "hl", .kind = .change, .pos = &.{.{ .name = "ids", .ty = .id, .many = true, .part = true }}, .keys = &.{P("color", .color)}, .dur = 0.8, .replay = false },
+    .{ .name = "hl", .kind = .change, .pos = &.{.{ .name = "ids", .ty = .id, .many = true, .part = true, .any_pin = true }}, .keys = &.{P("color", .color)}, .dur = 0.8, .replay = false },
     .{ .name = "spin", .kind = .change, .pos = &.{ P("target", .id), P("rate", .vec) }, .dur = 0 },
     .{ .name = "group", .kind = .flow, .pos = &.{.{ .name = "ids", .ty = .id, .many = true }}, .dur = 0, .needs_name = true },
 };
@@ -291,7 +291,16 @@ const Entity = struct {
     }
 };
 
-const AxesRanges = struct { is3: bool, x: [2]f64, y: [2]f64, z: [2]f64, xlog: bool = false, ylog: bool = false };
+const AxesRanges = struct {
+    is3: bool,
+    x: [2]f64,
+    y: [2]f64,
+    z: [2]f64,
+    xlog: bool = false,
+    ylog: bool = false,
+    /// 2D axes at board coordinates: the plot area (x0, y0, x1, y1), for the label lint.
+    body: ?[4]f64 = null,
+};
 
 /// Names that currently exist. Shared by every producer feeding one scene.
 pub const Scene = struct {
@@ -547,6 +556,20 @@ fn holdsKeyWords(hay: []const u8, answer: []const u8) bool {
     return keys >= 3 and found * 5 >= keys * 4;
 }
 
+/// Do two boxes (x0, y0, x1, y1) overlap by more than a touch?
+fn overlapArea(a: [4]f64, b: [4]f64) bool {
+    return @min(a[2], b[2]) - @max(a[0], b[0]) > 0.1 and @min(a[3], b[3]) - @max(a[1], b[1]) > 0.1;
+}
+
+/// A grid cell's row and column from its part name ("r2c3"), 1-based.
+fn gridCellOf(part: []const u8) ?[2]usize {
+    if (part.len < 4 or part[0] != 'r') return null;
+    const c = std.mem.indexOfScalar(u8, part, 'c') orelse return null;
+    const r = std.fmt.parseInt(usize, part[1..c], 10) catch return null;
+    const k = std.fmt.parseInt(usize, part[c + 1 ..], 10) catch return null;
+    return .{ r, k };
+}
+
 /// How many numbers the text holds (runs of digits, with their decimal point).
 fn countNumbers(t: []const u8) usize {
     var n: usize = 0;
@@ -668,6 +691,26 @@ const LineParser = struct {
         return toks.items;
     }
 
+    /// A {d.x} left after expansion, where d is a `data` block: x isn't among its results.
+    fn warnUnknownVars(p: *LineParser, line: []const u8) Error!void {
+        var i: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, line, i, '{')) |a| {
+            const b = std.mem.indexOfScalarPos(u8, line, a, '}') orelse return;
+            i = a + 1;
+            const ref = line[a + 1 .. b];
+            const dot = std.mem.indexOfScalar(u8, ref, '.') orelse continue;
+            const block = ref[0..dot];
+            const v = ref[dot + 1 ..];
+            if (v.len == 0 or !isIdent(v)) continue;
+            if (p.scene.vars.get(try std.fmt.allocPrint(p.arena, "{s}.__data__", .{block})) == null) continue;
+            const skipped = p.scene.vars.get(try std.fmt.allocPrint(p.arena, "{s}.__skipped__", .{block})) orelse "";
+            var it = std.mem.tokenizeScalar(u8, skipped, ' ');
+            while (it.next()) |s| if (std.mem.eql(u8, s, v))
+                return p.warn("{{{s}}}: {s}'s '{s}' isn't numbers in rows (a ragged list, or one holding None or tuples?), so it can't be used; make it an array or a list of numbers", .{ ref, block, v });
+            return p.warn("{{{s}}}: the data block {s} sets no variable '{s}'", .{ ref, block, v });
+        }
+    }
+
     fn run(p: *LineParser, src_line: []const u8) Error!void {
         // {d.x} from `data` results, except in code that runs (fig/data: f-strings use braces).
         var line = src_line;
@@ -681,6 +724,7 @@ const LineParser = struct {
             if (!runs_code) {
                 line = try p.scene.expand(p.arena, src_line);
                 if (p.body) |b| p.body = try p.scene.expand(p.arena, b);
+                try p.warnUnknownVars(line);
             }
         }
         var toks = try p.tokenize(line);
@@ -832,7 +876,7 @@ const LineParser = struct {
             if (fields.items[0].val.num < 0) return p.fail("wait: seconds must be >= 0", .{});
             dur = fields.items[0].val.num;
         }
-        if (std.mem.eql(u8, op.name, "axes")) try p.checkAxes(fields.items);
+        const axes_label_box: ?[4]f64 = if (std.mem.eql(u8, op.name, "axes")) try p.checkAxes(fields.items, on == null) else null;
         if (op.question) try p.checkQuestion(fields.items);
         if (std.mem.eql(u8, op.name, "data")) return p.runData(name.?, fieldStr(fields.items, "lang").?, fieldStr(fields.items, "code").?);
         if (std.mem.eql(u8, op.name, "fig") and std.mem.trim(u8, fieldStr(fields.items, "code").?, " \t\r\n").len == 0)
@@ -852,7 +896,7 @@ const LineParser = struct {
             }
             p.scene.board = b;
         }
-        const box: ?[4]f64 = if (on == null) try p.lintBounds(fields.items) else null;
+        const box: ?[4]f64 = if (on == null) (try p.lintBounds(fields.items)) orelse axes_label_box else null;
         var samples: ?[]const u8 = null;
         if (std.mem.eql(u8, op.name, "plot") or std.mem.eql(u8, op.name, "surf") or std.mem.eql(u8, op.name, "contour"))
             samples = try p.sample(fields.items);
@@ -979,6 +1023,16 @@ const LineParser = struct {
                     }
                     try words.append(p.arena, '\n');
                 }
+                // A grid with text=true shows its numbers: one line per row.
+                if (std.mem.eql(u8, op.name, "grid")) if (fieldVal(fields.items, "text")) |t| if (t == .boolean and t.boolean) {
+                    const cols: usize = @intFromFloat(fieldVal(fields.items, "dims").?.vec[1]);
+                    var it = std.mem.tokenizeAny(u8, fieldStr(fields.items, "values").?, " \t\r\n,;");
+                    var k: usize = 0;
+                    while (it.next()) |v| : (k += 1) {
+                        try words.appendSlice(p.arena, v);
+                        try words.append(p.arena, if ((k + 1) % cols == 0) '\n' else ' ');
+                    }
+                };
                 if (words.items.len > 0) try p.scene.setShown(i, words.items);
                 if (fieldVal(fields.items, "opacity")) |o| if (o == .num and o.num < 0.1) {
                     p.scene.names.getPtr(i).?.hidden = true;
@@ -1023,7 +1077,7 @@ const LineParser = struct {
     fn runData(p: *LineParser, name: []const u8, lang: []const u8, code: []const u8) Error!void {
         if (std.mem.trim(u8, code, " \t\r\n").len == 0) return p.fail("data: the code is empty; put it in a <<END block: d: data python <<END … END", .{});
         const key = dataKey(lang, code);
-        const c = p.scene.compute orelse return p.fail("data: nothing here runs code (it needs vcl serve, or results from vcl figs)", .{});
+        const c = p.scene.compute orelse return p.fail("data: nothing here runs code: open the lesson through `vcl serve` run inside `nix develop` (it has Python), or compute its results ahead with `vcl figs FILE`", .{});
         const result = c.run(c.ctx, lang, code, &key);
         const json = switch (result) {
             .json => |j| j,
@@ -1031,14 +1085,25 @@ const LineParser = struct {
                 defer p.scene.gpa.free(e);
                 return p.fail("data: {s}", .{e});
             },
-            .missing => return p.fail("data: not computed (it needs vcl serve; a published copy has only its own lessons' results)", .{}),
+            .missing => return p.fail("data: not computed here (offline, or a published copy without this lesson's results): open it through `vcl serve` run inside `nix develop`, or run `vcl figs FILE` before publishing", .{}),
         };
         defer p.scene.gpa.free(json);
         const parsed = std.json.parseFromSliceLeaky(std.json.Value, p.arena, json, .{}) catch return p.fail("data: unreadable results", .{});
         if (parsed != .object) return p.fail("data: unreadable results", .{});
         var it = parsed.object.iterator();
         var n: usize = 0;
+        try p.scene.setVar(try std.fmt.allocPrint(p.arena, "{s}.__data__", .{name}), "");
         while (it.next()) |kv| {
+            if (std.mem.eql(u8, kv.key_ptr.*, "__skipped__")) {
+                // Variables the lesson can't use: named if a line asks for one.
+                var names: std.ArrayList(u8) = .empty;
+                if (kv.value_ptr.* == .array) for (kv.value_ptr.array.items) |x| if (x == .string) {
+                    try names.appendSlice(p.arena, x.string);
+                    try names.append(p.arena, ' ');
+                };
+                try p.scene.setVar(try std.fmt.allocPrint(p.arena, "{s}.__skipped__", .{name}), names.items);
+                continue;
+            }
             var buf: std.ArrayList(u8) = .empty;
             if (!try dataText(p.arena, &buf, kv.value_ptr.*, 0)) continue;
             const full = try std.fmt.allocPrint(p.arena, "{s}.{s}", .{ name, kv.key_ptr.* });
@@ -1052,6 +1117,17 @@ const LineParser = struct {
     /// their choices; estimate's answer must lie in its range.
     fn checkQuestion(p: *LineParser, fields: anytype) Error!void {
         const op = p.op.name;
+        // hide=a,b: board things hidden while the question is open (back once it's answered).
+        for (fields) |*f| if (std.mem.eql(u8, f.name, "hide")) {
+            var ids: std.ArrayList(Value) = .empty;
+            var it = std.mem.tokenizeAny(u8, f.val.str, ", ");
+            while (it.next()) |id| {
+                if (p.scene.names.get(id) == null) return p.fail("{s}: hide: unknown name '{s}'", .{ op, id });
+                try ids.append(p.arena, .{ .id = id });
+            }
+            if (ids.items.len == 0) return p.fail("{s}: hide= needs names: hide=a,b", .{op});
+            f.val = .{ .list = ids.items };
+        };
         const choices: ?usize = for (fields) |f| {
             if (std.mem.eql(u8, f.name, "options") or std.mem.eql(u8, f.name, "ids")) break f.val.list.len;
         } else null;
@@ -1130,20 +1206,44 @@ const LineParser = struct {
         // Readable on the board right now?
         for (needles.items) |n| {
             for (p.scene.names.keys(), p.scene.names.values()) |id, e| {
-                if (e.hidden or e.shown.len == 0) continue;
+                if (e.hidden or e.shown.len == 0 or isHidden(fields, id)) continue;
                 // A one- or two-digit number among many (a table of weights) is chance.
                 if (short_num != null and short_num.?.ptr == n.ptr and countNumbers(e.shown) >= 4) continue;
                 if (containsAnswer(e.shown, n)) {
-                    return p.warn("{s}: its answer is on the board (\"{s}\" in {s}); fade it first (fade {s} 0), and back after", .{ op, clip(n, 40), id, id });
+                    return p.warn("{s}: its answer is on the board (\"{s}\" in {s}); add hide={s} to the question (hidden while asked, back after)", .{ op, clip(n, 40), id, id });
                 }
                 if (std.mem.eql(u8, op, "recall") and holdsKeyWords(e.shown, n)) {
-                    return p.warn("recall: most of its answer's words are on the board (in {s}); fade it first (fade {s} 0), and back after", .{ id, id });
+                    return p.warn("recall: most of its answer's words are on the board (in {s}); add hide={s} to the question (hidden while asked, back after)", .{ id, id });
                 }
             }
         }
         // pick: the right one labelled with a word the question uses, and no other is.
         if (std.mem.eql(u8, op, "pick")) {
             const ids = fieldVal(fields, "ids").?.list;
+            // A grid cell whose number is printed (text=true): asked by its value, or for the largest…
+            for (answer) |a| {
+                const k: usize = @intFromFloat(a.num);
+                const id = ids[k - 1].id;
+                const dot = std.mem.indexOfScalar(u8, id, '.') orelse continue;
+                const e = p.scene.names.get(id[0..dot]) orelse continue;
+                if (!std.mem.eql(u8, e.op, "grid") or e.shown.len == 0 or e.hidden or isHidden(fields, id[0..dot])) continue;
+                const cell = gridCellOf(id[dot + 1 ..]) orelse continue;
+                var rows = std.mem.splitScalar(u8, e.shown, '\n');
+                var r: usize = 1;
+                const v = while (rows.next()) |row| : (r += 1) {
+                    if (r != cell[0]) continue;
+                    var cs = std.mem.tokenizeScalar(u8, row, ' ');
+                    var c: usize = 1;
+                    break while (cs.next()) |x| : (c += 1) {
+                        if (c == cell[1]) break x;
+                    } else null;
+                } else null;
+                const superlative = for ([_][]const u8{ "largest", "smallest", "highest", "lowest", "biggest", "greatest", "maximum", "minimum", "max", "min", "most", "least", "strongest", "weakest" }) |w| {
+                    if (containsWord(q, w)) break true;
+                } else false;
+                if (superlative or (v != null and containsAnswer(q, v.?)))
+                    return p.warn("pick: {s} prints its numbers (text=true), so the right cell can be read off the board; ask on a copy drawn without text=true", .{id[0..dot]});
+            }
             var qw = std.mem.tokenizeAny(u8, q, " \t\n,.?!:;'\"()");
             while (qw.next()) |w| {
                 if (w.len < 4 or isStopWord(w)) continue;
@@ -1153,7 +1253,7 @@ const LineParser = struct {
                 for (ids, 1..) |v, k| {
                     const base = v.id[0 .. std.mem.indexOfScalar(u8, v.id, '.') orelse v.id.len];
                     const e = p.scene.names.get(base) orelse continue;
-                    if (e.hidden or !containsWord(e.shown, w)) continue;
+                    if (e.hidden or isHidden(fields, base) or !containsWord(e.shown, w)) continue;
                     const is_right = for (answer) |a| {
                         if (a.num == @as(f64, @floatFromInt(k))) break true;
                     } else false;
@@ -1166,6 +1266,14 @@ const LineParser = struct {
                     return p.warn("pick: the right choice is labelled with \"{s}\", a word the question uses: that tests reading, not memory; fade its label first", .{w});
             }
         }
+    }
+
+    /// Is `id` in the question's hide= list?
+    fn isHidden(fields: anytype, id: []const u8) bool {
+        const h = fieldVal(fields, "hide") orelse return false;
+        if (h != .list) return false;
+        for (h.list) |v| if (std.mem.eql(u8, v.id, id)) return true;
+        return false;
     }
 
     fn value(p: *LineParser, param: Param, text: []const u8) Error!Value {
@@ -1198,6 +1306,8 @@ const LineParser = struct {
                 return .{ .range = .{ a.?, b.? } };
             },
             .str => {
+                // hide=a,b: names, quoted or not.
+                if (text[0] != '"' and std.mem.eql(u8, param.name, "hide")) return .{ .str = text };
                 if (text[0] != '"') return p.fail("{s}: '{s}' must be a quoted string, e.g. \"{s}\"", .{ op, param.name, text });
                 return .{ .str = try unescape(p.arena, text[1 .. text.len - 1], param.raw) };
             },
@@ -1319,8 +1429,73 @@ const LineParser = struct {
     /// renderer can't move things the model placed, so say so up front).
     /// Estimates: title glyphs ~0.23 wide, port names ~0.15, as the viewer draws them.
     /// Log axes need a positive 2D range; explicit ticks should fall inside it.
-    fn checkAxes(p: *LineParser, fields: anytype) Error!void {
+    /// Also: do explicit axis labels stay on the board? Returns the xlabel's box
+    /// (for the overlap lint) when the axes sit on the board at plain coordinates.
+    fn checkAxes(p: *LineParser, fields: anytype, on_board: bool) Error!?[4]f64 {
         const A = axesRanges(fields);
+        const box = if (on_board and !A.is3) try p.lintAxisLabels(fields, A) else null;
+        try p.checkAxesRanges(fields, A);
+        return box;
+    }
+
+    fn lintAxisLabels(p: *LineParser, fields: anytype, A: AxesRanges) Error!?[4]f64 {
+        const at = if (fieldVal(fields, "at")) |v| (if (v == .point and v.point == .abs) v.point.abs else return null) else return null;
+        const dims = if (fieldVal(fields, "size")) |v| v.vec else Vec3{ 8, 5, 0 };
+        const s = 0.34; // label text size (viewer/js/runtime.js BUILD.axes)
+        const bx = p.scene.board[0] / 2;
+        const by = p.scene.board[1] / 2;
+        // A label may use the board's margin (0.5 at the sides, 0.4 at the top: viewer/js/board.js), not beyond.
+        const mx = 0.55;
+        const my = 0.45;
+        // Where the axis lines cross: 0, or the nearer end of the range.
+        const cross = struct {
+            fn pos(r: [2]f64, log: bool, len: f64) f64 {
+                const t = struct {
+                    fn f(v: f64, lg: bool, lo: f64) f64 {
+                        return if (lg) @log10(if (v > 0) v else lo) else v;
+                    }
+                }.f;
+                const v = std.math.clamp(0, r[0], r[1]);
+                const a = t(r[0], log, r[0]);
+                const b = t(r[1], log, r[0]);
+                return (t(v, log, r[0]) - (a + b) / 2) * len / (b - a);
+            }
+        };
+        var box: ?[4]f64 = null;
+        if (fieldStr(fields, "xlabel")) |l| if (std.mem.trim(u8, l, " ").len > 0) {
+            const chars: f64 = @floatFromInt(std.unicode.utf8CountCodepoints(l) catch l.len);
+            const x0 = at[0] + dims[0] / 2 + 0.35;
+            const x1 = x0 + chars * 0.45 * s + 0.4 * s;
+            const y = at[1] + cross.pos(A.y, A.ylog, dims[1]);
+            box = .{ x0, y - 0.4 * s, x1, y + 0.4 * s };
+            if (x1 > bx + mx)
+                try p.warn("axes: the xlabel \"{s}\" runs off the right of the board (to x {d:.1}; its edge is at {d:.1}); shorten it, or move or narrow the axes (size=)", .{ l, x1, bx + 0.5 });
+        };
+        if (fieldStr(fields, "ylabel")) |l| if (std.mem.trim(u8, l, " ").len > 0) {
+            const chars: f64 = @floatFromInt(std.unicode.utf8CountCodepoints(l) catch l.len);
+            const w = chars * 0.45 * s + 0.4 * s;
+            const x = at[0] + cross.pos(A.x, A.xlog, dims[0]);
+            const top = at[1] + dims[1] / 2 + 0.35 + 0.8 * s;
+            if (top > by + my or x - w / 2 < -bx - mx or x + w / 2 > bx + mx)
+                try p.warn("axes: the ylabel \"{s}\" runs off the board (it sits above the axes, x {d:.1}..{d:.1}, up to y {d:.1}; the board is {d}x{d}); shorten it, or move or shrink the axes", .{ l, x - w / 2, x + w / 2, top, 2 * bx, 2 * by });
+        };
+        // Labels and other charts: this xlabel into another's plot area, or this plot area onto another's xlabel.
+        const body = A.body;
+        for (p.scene.names.keys(), p.scene.names.values()) |k, e| {
+            const o = e.axes orelse continue;
+            if (box) |b| if (o.body) |ob| if (overlapArea(b, ob)) {
+                try p.warn("axes: the xlabel \"{s}\" runs into the axes '{s}'; shorten it, or move the axes apart", .{ fieldStr(fields, "xlabel").?, k });
+                break;
+            };
+            if (body) |nb| if (e.box) |eb| if (overlapArea(nb, eb)) {
+                try p.warn("axes: these axes land on the xlabel of '{s}'; move them apart, or shorten that label", .{k});
+                break;
+            };
+        }
+        return box;
+    }
+
+    fn checkAxesRanges(p: *LineParser, fields: anytype, A: AxesRanges) Error!void {
         inline for (.{ "x", "y" }) |ax| {
             const log = @field(A, ax ++ "log");
             const r = @field(A, ax);
@@ -1591,6 +1766,7 @@ const LineParser = struct {
             try w.writeAll(",\"bars\":[");
             var it = std.mem.tokenizeAny(u8, fieldStr(fields, "data").?, " \t\r\n;");
             var n: usize = 0;
+            var warned = false;
             while (it.next()) |item| : (n += 1) {
                 const bad = "errbar: expected \"x,lo..hi\" or \"x,y,lo..hi\" items (y,lo..hi with horiz=true), got '{s}'";
                 const last = std.mem.lastIndexOfScalar(u8, item, ',') orelse return p.fail(bad, .{item});
@@ -1602,6 +1778,10 @@ const LineParser = struct {
                 const x = parseNum(head.next().?) orelse return p.fail(bad, .{item});
                 const y: ?f64 = if (head.next()) |t| parseNum(t) orelse return p.fail(bad, .{item}) else null;
                 if (head.next() != null) return p.fail(bad, .{item});
+                if (y) |v| if ((v < lo or v > hi) and !warned) {
+                    warned = true;
+                    try p.warn("errbar: the value {d} in '{s}' lies outside its interval {d}..{d}; the order is {s},value,lo..hi", .{ v, item, lo, hi, if (fieldVal(fields, "horiz") != null and fieldVal(fields, "horiz").?.boolean) "row" else "x" });
+                };
                 if (n > 0) try w.writeByte(',');
                 try w.writeByte('[');
                 try writeNum(w, x);
@@ -1936,6 +2116,7 @@ const LineParser = struct {
         var w: f64 = 0;
         var h: f64 = 0;
         var x0: f64 = undefined; // left edge
+        var y_mid: f64 = 0; // the box's middle, relative to `at`
         if (std.mem.eql(u8, op, "text")) {
             const s = num.get(fields, "size") orelse 0.45;
             const l = num.lines(fieldStr(fields, "text") orelse "");
@@ -1991,7 +2172,20 @@ const LineParser = struct {
                 h = fd.val.vec[1];
             };
             x0 = at[0] - w / 2;
-        } else if (std.mem.eql(u8, op, "nn") or std.mem.eql(u8, op, "grid") or std.mem.eql(u8, op, "bits")) {
+        } else if (std.mem.eql(u8, op, "bits")) {
+            // As drawn (viewer/js/charts.js): boxes from -0.3 to 0.7 cells, the
+            // bit numbers above, the braces and field labels below.
+            const sz = diagramSize(op, fields) orelse return null;
+            const cell = sz[1] / 3.4;
+            const index = if (fieldVal(fields, "index")) |v| v.boolean else true;
+            const top = 0.7 * cell + (if (index) 0.32 * cell + @max(0.16, 0.36 * cell) * 0.6 else 0);
+            const by = -0.38 * cell - @max(0.12, 0.3 * cell);
+            const bottom = if (fieldStr(fields, "labels") != null) by - @max(0.2, 0.42 * cell) - @max(0.26, 0.5 * cell) * 0.6 else by;
+            w = sz[0];
+            h = top - bottom;
+            y_mid = (top + bottom) / 2;
+            x0 = at[0] - w / 2;
+        } else if (std.mem.eql(u8, op, "nn") or std.mem.eql(u8, op, "grid")) {
             const sz = diagramSize(op, fields) orelse return null;
             w = sz[0];
             h = sz[1];
@@ -2022,8 +2216,8 @@ const LineParser = struct {
         const bx = p.scene.board[0] / 2;
         const by = p.scene.board[1] / 2;
         const x1 = x0 + w;
-        const y0 = at[1] - h / 2;
-        const y1 = at[1] + h / 2;
+        const y0 = at[1] + y_mid - h / 2;
+        const y1 = at[1] + y_mid + h / 2;
         var edges: [4][]const u8 = undefined;
         var ne: usize = 0;
         if (x0 < -bx - tol) {
@@ -2280,6 +2474,11 @@ fn axesRanges(fields: anytype) AxesRanges {
         .z = if (z) |v| v.range else .{ 0, 0 },
         .xlog = if (fieldVal(fields, "xlog")) |v| v.boolean else false,
         .ylog = if (fieldVal(fields, "ylog")) |v| v.boolean else false,
+        .body = if (is3 or fieldVal(fields, "on") != null) null else if (fieldVal(fields, "at")) |v| (if (v == .point and v.point == .abs) blk: {
+            const at = v.point.abs;
+            const d = if (fieldVal(fields, "size")) |sz| sz.vec else Vec3{ 8, 5, 0 };
+            break :blk .{ at[0] - d[0] / 2, at[1] - d[1] / 2, at[0] + d[0] / 2, at[1] + d[1] / 2 };
+        } else null) else null,
     };
 }
 
@@ -3009,6 +3208,18 @@ test "overlap lint: boxes that land on each other; moved things are forgotten" {
     );
 }
 
+test "overlap lint: stacked bits rows that only touch are fine" {
+    const got = try runLines(
+        \\a: bits 0,1 "ssss|iiii" labels="sign,int"
+        \\b: bits 0,-0.5 "ssss|iiii" labels="sign,int"
+        \\c: bits 0,-1.5 "ssss|iiii"
+    , .vcl);
+    defer testing.allocator.free(got);
+    errdefer std.debug.print("{s}", .{got});
+    try testing.expect(std.mem.indexOf(u8, got, "\"line\":2,\"msg\":\"bits: overlaps") == null);
+    try testing.expect(std.mem.indexOf(u8, got, "\"line\":3,\"msg\":\"bits: overlaps 'b'") != null); // b's labels reach down to it
+}
+
 test "group needs name and reparents" {
     try expectOut(
         \\a: pt 0,0
@@ -3207,6 +3418,12 @@ test "question advice: answers on the board, giveaways, long cards" {
         \\q10: estimate "The weight?" -4..4 answer=-1
         \\say "It is 3.14159 metres."
         \\say "About 3.1 metres, version 1.2.3 aside."
+        \\h: text 0,-4 "Q = C V"
+        \\q13: recall "Charge?" "Q = C V" hide=h
+        \\q14: recall "Charge?" "Q = C V" hide=nope
+        \\g: grid 0,4 2,2 "0.1 0.9 0.4 0.2" text=true
+        \\q15: pick "Which weight is largest?" g.r1c1 g.r1c2 answer=2
+        \\q16: pick "Which weight did the last step update?" g.r1c1 g.r1c2 answer=2
     , .vcl);
     defer testing.allocator.free(got);
     const has = struct {
@@ -3229,11 +3446,16 @@ test "question advice: answers on the board, giveaways, long cards" {
     try testing.expect(has(got, "\"line\":18,\"msg\":\"recall: most of its answer's words are on the board (in f)"));
     try testing.expect(has(got, "\"line\":20,\"msg\":\"say: round numbers for speech (\\\"3.14159\\\""));
     try testing.expect(!has(got, "\"line\":21,\"msg\":\"say: round"));
+    try testing.expect(!has(got, "\"line\":23,\"msg\"")); // hidden while asked
+    try testing.expect(has(got, "\"hide\":[\"h\"]"));
+    try testing.expect(has(got, "\"line\":24,\"msg\":\"recall: hide: unknown name 'nope'\""));
+    try testing.expect(has(got, "\"line\":26,\"msg\":\"pick: g prints its numbers (text=true)"));
+    try testing.expect(!has(got, "\"line\":27,\"msg\""));
 }
 
 test "data: without anything to run the code, an error" {
     try expectOut("d: data python \"x = 1\"\n",
-        \\{"op":"diag","level":"error","line":1,"msg":"data: nothing here runs code (it needs vcl serve, or results from vcl figs)"}
+        \\{"op":"diag","level":"error","line":1,"msg":"data: nothing here runs code: open the lesson through `vcl serve` run inside `nix develop` (it has Python), or compute its results ahead with `vcl figs FILE`"}
         \\
     );
 }
@@ -3453,6 +3675,59 @@ test "charts and diagrams: data strings become arrays, pins and parts" {
         \\{"op":"diag","level":"error","line":12,"msg":"hl: unknown name 'b'"}
         \\
     );
+}
+
+test "errbar: a value outside its interval; move on=AX; hl on a table row; unknown data vars" {
+    const got = try runLines(
+        \\ax: axes 0,0 x=0..4 y=0..5
+        \\errbar ax "1,1,0.5..1.5"
+        \\errbar ax "1.5,1,0.2..0.4 2,0.3,0.2..0.4" horiz=true
+        \\p: pt 1,1 on=ax
+        \\move p 3,4 on=ax
+        \\t: table 0,-3 "a|b" "1|2" "3|4"
+        \\hl t.R2
+        \\hl t.R9
+    , .vcl);
+    defer testing.allocator.free(got);
+    errdefer std.debug.print("{s}", .{got});
+    const has = struct {
+        fn in(hay: []const u8, needle: []const u8) bool {
+            return std.mem.indexOf(u8, hay, needle) != null;
+        }
+    }.in;
+    try testing.expect(!has(got, "\"line\":2,\"msg\""));
+    try testing.expect(has(got, "\"line\":3,\"msg\":\"errbar: the value 1 in '1.5,1,0.2..0.4' lies outside its interval 0.2..0.4; the order is row,value,lo..hi\""));
+    try testing.expect(has(got, "{\"op\":\"move\",\"line\":5,\"par\":false,\"dur\":0.6,\"target\":\"p\",\"to\":[3,4,0],\"on\":\"ax\"}"));
+    try testing.expect(has(got, "{\"op\":\"hl\",\"line\":7,\"par\":false,\"dur\":0.8,\"ids\":[\"t.R2\"]}"));
+    try testing.expect(has(got, "\"line\":8,\"msg\":\"hl: 't' has no pin 'R9'"));
+}
+
+test "axis labels that run off the board, or into other charts" {
+    const got = try runLines(
+        \\ax: axes 3,0 xlabel="training samples per second"
+        \\clear
+        \\ay: axes -3,0 size=8,9 ylabel="energy"
+        \\clear
+        \\ok: axes 0,0 xlabel="t" ylabel="v"
+        \\n: text 5,0 "note"
+        \\clear
+        \\board 20,11
+        \\l: axes -4,0 size=7,5 x=0..2 y=0..1 xlabel="lean, four settings"
+        \\r: axes 5.7,0 size=7,5 x=0..2 y=0..1
+    , .vcl);
+    defer testing.allocator.free(got);
+    errdefer std.debug.print("{s}", .{got});
+    const has = struct {
+        fn in(hay: []const u8, needle: []const u8) bool {
+            return std.mem.indexOf(u8, hay, needle) != null;
+        }
+    }.in;
+    try testing.expect(has(got, "\"line\":1,\"msg\":\"axes: the xlabel \\\"training samples per second\\\" runs off the right of the board"));
+    try testing.expect(has(got, "\"line\":3,\"msg\":\"axes: the ylabel \\\"energy\\\" runs off the board"));
+    try testing.expect(!has(got, "\"line\":5,\"msg\""));
+    try testing.expect(has(got, "\"line\":6,\"msg\":\"text: overlaps 'ok' (axes)"));
+    try testing.expect(!has(got, "\"line\":9,\"msg\""));
+    try testing.expect(has(got, "\"line\":10,\"msg\":\"axes: these axes land on the xlabel of 'l'"));
 }
 
 test "log axes and listed ticks" {

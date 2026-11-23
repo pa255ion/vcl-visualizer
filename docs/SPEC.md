@@ -259,13 +259,13 @@ pink`. The parser lists the valid parts when one is misspelled.
 
 | Op | Arguments | Keys / effect |
 |---|---|---|
-| `move` | `ID P` | animate position (centre) to P |
+| `move` | `ID P` | animate position (centre) to P; `on=AX` reads P in those axes' (or a figure's) data coordinates |
 | `rot` | `ID V` | animate rotation to Euler degrees `x,y,z` |
 | `scale` | `ID N` | animate uniform scale |
 | `color` | `ID C` | animate colour (also of a part, §4.8) |
 | `fade` | `ID N` | animate opacity (0 hides but keeps; also of a part) |
 | `set` | `ID` | any of `pos=P rot=V scale=N color=C opacity=N text=S focus=R` |
-| `hl` | `ID…` | brief highlight pulse; `color=C`; also parts (`hl n.L1_3`) |
+| `hl` | `ID…` | brief highlight pulse; `color=C`; also parts (`hl n.L1_3`) and pins: a table row `t.R2` or code line `c.L3` glows across its width, any other pin (`R1.a`) gets a ring |
 | `spin` | `ID V` | continuous rotation, degrees/second per axis; `0,0,0` stops |
 | `group` | `ID…` | needs a name; bundles entities so they move/rotate together |
 
@@ -292,7 +292,9 @@ estimate "Roughly what is e?" 2..3.5 answer=2.718 tol=0.05
 recall "State Ohm's law." "V = I R: voltage is current times resistance."
 ```
 
-All four take `from=S` (review of an earlier lesson: the card says "Review
+All four take `hide=ID,ID…`: board things hidden while the card is up and
+shown again once it is answered (or skipped), so a table or label that would
+give the answer away needs no `fade` before and after. All four take `from=S` (review of an earlier lesson: the card says "Review
 from S") and, except `recall`, `predict=true` (a guess before the teaching: the
 card says "Guess first (not scored)", the score leaves it out and practice
 skips it). The estimate slider starts at a random place away from the answer
@@ -301,8 +303,10 @@ say how sure they are (guessing, fairly, sure), sent with the answer. A recall
 card asks the learner to say the answer out loud before revealing it.
 
 The parser warns when a question gives itself away: its answer readable on the
-board (a text, node, table, code or label that is not faded out), a `pick`
-whose right choice is labelled with a word from the question, a right option
+board (a text, node, table, code, label or `grid … text=true` that is not
+faded out or in `hide=`; a recall answer whose key words are mostly in one
+board text counts too), a `pick` whose right choice is labelled with a word
+from the question or is a grid cell printing its number, a right option
 much longer than the others, an estimate answer in the middle of its range, a
 recall answer over about 20 words (except a recap that asks to list), and
 numbers in speech with three or more decimals. `vcl check --design` reviews a
@@ -375,7 +379,9 @@ say "Each swing takes about {d.period} seconds."
 blocks and prose (not in `fig`/`data` code): a number (6 significant digits;
 round it in the code for speech), a string as it is, a list as `1 2 3` (for
 `bars`, `hist`, `grid`), rows as `x,y x,y` (points: `path`, `poly`, `scatter`).
-Only numbers, strings, lists and 1D/2D arrays become variables. The code runs
+Only numbers, strings, lists and 1D/2D arrays become variables; others
+(a ragged list, one holding `None` or tuples) are skipped, and a line that
+uses one gets a warning naming it, as does `{d.x}` for a variable `d` never set. The code runs
 while its line is parsed, in the same sandbox as figures, and the lesson waits
 for it (the next lines need its numbers); results are cached by the code. A
 failure is an error on the line: `data: <error> (code line N)`. It has no IR of

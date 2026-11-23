@@ -112,7 +112,10 @@ after the first of a burst (a burst ends when the timeline runs empty).
 
 **Questions** (`quiz`, `pick`, `estimate`, `recall`) hold the timeline the same
 way, from their start until the learner answers and continues; only that
-releases them, not "next step". Their `dur` is 0.
+releases them, not "next step". Their `dur` is 0. `"hide":["t","g"]` lists
+entities to hide (not delete) while the card is up; show them again when it is
+answered, skipped or closed. `move` may carry `"on":"ax"`: then `to` is in
+those axes' data coordinates (or the figure's).
 
 **Steps, pause, back and forward** (both viewers): number the steps as
 commands arrive (a step starts at each non-`par` `say` and each question) and
@@ -191,7 +194,9 @@ lines after it, so clients only see the resulting commands.
 entity: `"ids":["n.L1_3"]`, `"target":"g.r2c3"`. The parser only allows the
 parts listed below (they are the same names as the pins). A renderer recolours
 or dims only that part; `hl` pulses its colour (and the WebXR viewer swells
-neurons and bit boxes).
+neurons and bit boxes). `hl` may also name any pin (`t.R2`, `c.L3`, `R1.a`):
+the viewers pulse a glow there, across the whole row for table rows and code
+lines, a ring otherwise.
 
 | Op | Parts (and pins) |
 |---|---|

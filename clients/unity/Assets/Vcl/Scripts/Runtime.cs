@@ -74,6 +74,8 @@ namespace Vcl
         public Action<double[]> SetFocus;
         /// <summary>Named connection points, obj-local (wires and refs attach here).</summary>
         public Dictionary<string, (Vector3 at, Vector3 dir)> Pins;
+        /// <summary>For a table or code panel: each row pin's band (width, height), for hl.</summary>
+        public Dictionary<string, Vector2> PinRows;
         public Dictionary<string, Part> Parts;
         public readonly List<Transform> Billboards = new List<Transform>();
         public readonly List<Stroke> Strokes = new List<Stroke>();
@@ -367,12 +369,22 @@ namespace Vcl
             Avatar?.Say(text, dur, spoken?.clip);
         }
 
+        readonly List<Entity> hiddenForQuestion = new List<Entity>(); // what a question's hide= hid
+
         void Ask(Cmd cmd, Task gate)
         {
             CloseQuestion();
+            // hide=: board things that would give the answer away, hidden until it's answered.
+            foreach (var o in cmd.List("hide") ?? new List<object>())
+                if (o is string id && Entities.TryGetValue(id, out var he) && he.Obj.gameObject.activeSelf)
+                {
+                    he.Obj.gameObject.SetActive(false);
+                    hiddenForQuestion.Add(he);
+                }
             QuestionCard card = null;
             card = new QuestionCard(this, cmd, r =>
             {
+                Unhide();
                 Results[cmd] = r;
                 if (!r.Skipped)
                 {
@@ -447,8 +459,16 @@ namespace Vcl
             OnPractice?.Invoke(right, total);
         }
 
+        void Unhide()
+        {
+            foreach (var e in hiddenForQuestion)
+                if (e.Obj && Entities.TryGetValue(e.Id, out var cur) && cur == e) e.Obj.gameObject.SetActive(true);
+            hiddenForQuestion.Clear();
+        }
+
         public void CloseQuestion()
         {
+            Unhide();
             Question?.Dispose();
             Question = null;
         }
@@ -813,7 +833,7 @@ namespace Vcl
                         return l;
                     });
                 case "group": return GroupTask(c);
-                case "move": return Change(c, e => MoveSetup(e, c["to"]));
+                case "move": return Change(c, e => MoveSetup(e, c["to"], c.Has("on") && !IsRef(c["to"]) && Entities.TryGetValue(c.Str("on"), out var on) ? on : null));
                 case "rot": return Change(c, e => RotSetup(e, Raw(c["rot"])));
                 case "scale": return Change(c, e => ScaleSetup(e, c.Flt("scale", 1)));
                 case "fade":
@@ -933,9 +953,12 @@ namespace Vcl
             };
         }
 
-        Action<float, float> MoveSetup(Entity e, object to)
+        Action<float, float> MoveSetup(Entity e, object to, Entity on = null)
         {
-            var dest = e.ToParent(to);
+            // on=AX: `to` is in those axes' (or a figure's) data coordinates.
+            var dest = on != null
+                ? e.ParentObj.InverseTransformPoint(on.Obj.TransformPoint(on.AxesSelf != null ? on.AxesSelf.Map(Raw(to)) : Vector3.zero))
+                : e.ToParent(to);
             var center = e.ParentObj.InverseTransformPoint(AnchorWorld(e, "center"));
             var from = e.Obj.localPosition;
             var target = from + (dest - center);
@@ -993,9 +1016,34 @@ namespace Vcl
                 Begin = () =>
                 {
                     var hl = Draw.Hex(c.Str("color") ?? "#ffe066");
-                    foreach (var id in c.List("ids"))
+                    foreach (var o in c.List("ids"))
                     {
-                        var t = TargetOf(id as string);
+                        var id = o as string;
+                        int dot = id.IndexOf('.');
+                        if (dot > 0)
+                        {
+                            // A pin (a table row t.R2, a code line, a part's pin): a glow that pulses there.
+                            var pe = Get(id.Substring(0, dot));
+                            var pin = id.Substring(dot + 1);
+                            if ((pe.Parts == null || !pe.Parts.ContainsKey(pin)) && pe.Pins != null && pe.Pins.TryGetValue(pin, out var pp))
+                            {
+                                Vector2 band = default;
+                                bool row = pe.PinRows != null && pe.PinRows.TryGetValue(pin, out band);
+                                var mat = Draw.Unlit(new Color(hl.r, hl.g, hl.b, 0), 3010);
+                                var mesh = row ? Draw.Fill(Draw.RoundedRect(band.x, band.y, 0.04f)) : Draw.Ring(0.16f, 0.26f);
+                                var glow = Draw.MeshObject(pe.Obj, "hl", mesh, mat, 40).transform;
+                                glow.localPosition = pp.at + new Vector3(row ? -band.x / 2 : 0, 0, -0.03f);
+                                float peak = row ? 0.35f : 0.9f;
+                                us.Add(raw =>
+                                {
+                                    if (!glow) return;
+                                    mat.color = new Color(hl.r, hl.g, hl.b, peak * Mathf.Sin(Mathf.PI * raw));
+                                    if (raw >= 1) Draw.Kill(glow.gameObject);
+                                });
+                                continue;
+                            }
+                        }
+                        var t = TargetOf(id);
                         var tints = t.Tints;
                         var from = tints.ConvertAll(x => x.Color);
                         var s0 = t.Objs.ConvertAll(o => o.localScale);

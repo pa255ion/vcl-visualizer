@@ -304,6 +304,7 @@ namespace Vcl
                 }
                 bool In(int k) => focus == null || (k >= focus[0] && k <= focus[1]);
                 e.Pins = new Dictionary<string, (Vector3, Vector3)>();
+                e.PinRows = new Dictionary<string, Vector2>();
                 for (int i = 0; i < n; i++)
                 {
                     float y = H / 2 - titleH - pad - (i + 0.5f) * size;
@@ -313,6 +314,7 @@ namespace Vcl
                     foreach (var t in rows[i]) sb.Append($"<color={Panels.Theme[Panels.Theme.ContainsKey(t.Type) ? t.Type : "plain"]}>{Esc(t.Text)}</color>");
                     TextAt(e, box, sb.ToString(), V2(-W / 2 + pad * 0.75f, y, -0.01f), s, Color.white, "left", "text", baseAlpha: In(i + 1) ? 1 : 0.4f, face: Draw.Mono);
                     e.Pins[$"L{i + 1}"] = (V2(W / 2, y), V2(1, 0));
+                    e.PinRows[$"L{i + 1}"] = new Vector2(W - 0.06f, size);
                 }
             });
             redraw();
@@ -349,6 +351,7 @@ namespace Vcl
                 PanelBack(e, box, W, H, size * 0.2f, "#111823", "#30363d");
                 bool InFocus(int dataRow) => focus != null && dataRow >= focus[0] && dataRow <= focus[1];
                 e.Pins = new Dictionary<string, (Vector3, Vector3)>();
+                e.PinRows = new Dictionary<string, Vector2>();
                 var rules = new List<List<Vector3>>();
                 for (int i = 0; i < nrow; i++)
                 {
@@ -366,7 +369,7 @@ namespace Vcl
                         e.TrackT(t, "text", focus != null && !head && !InFocus(dataRow) ? 0.45f : 1);
                         x += widths[k];
                     }
-                    if (!head) e.Pins[$"R{dataRow}"] = (V2(W / 2, ym), V2(1, 0));
+                    if (!head) { e.Pins[$"R{dataRow}"] = (V2(W / 2, ym), V2(1, 0)); e.PinRows[$"R{dataRow}"] = new Vector2(W - 0.06f, size); }
                 }
                 if (header) rules.Add(new List<Vector3> { V2(-W / 2 + 0.03f, H / 2 - 0.03f - size, -0.005f), V2(W / 2 - 0.03f, H / 2 - 0.03f - size, -0.005f) });
                 float xr = -W / 2 + 0.03f;

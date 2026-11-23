@@ -581,8 +581,10 @@ namespace Vcl
             });
             tickStroke.Set(ticks);
             gridStroke.Set(grid);
-            Label(c.Str("xlabel") ?? "x", P(xr[1], oy) + new Vector3(0.35f, 0, 0), "left", 0.34f, "#e8edf3");
-            Label(c.Str("ylabel") ?? "y", P(ox, yr[1]) + (is3 ? new Vector3(0, 0, 0.35f) : new Vector3(0, 0.35f, 0)), "center", 0.34f, "#e8edf3");
+            // The default "x"/"y" names a numeric axis; without its ticks (categories, rows, a bare line) it goes too.
+            string lx = c.Str("xlabel") ?? (showX ? "x" : ""), ly = c.Str("ylabel") ?? (showY ? "y" : "");
+            if (lx.Trim().Length > 0) Label(lx, P(xr[1], oy) + new Vector3(0.35f, 0, 0), "left", 0.34f, "#e8edf3");
+            if (ly.Trim().Length > 0) Label(ly, P(ox, yr[1]) + (is3 ? new Vector3(0, 0, 0.35f) : new Vector3(0, 0.35f, 0)), "center", 0.34f, "#e8edf3");
             if (is3) Label(c.Str("zlabel") ?? "z", P(ox, oy, zr[1]) + new Vector3(0, 0.35f, 0), "center", 0.34f, "#e8edf3");
 
             e.Render = p =>
