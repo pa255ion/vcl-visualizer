@@ -287,7 +287,7 @@ namespace Vcl.EditorTools
             app.Cam = cam;
             app.Build();
             app.AssetRoot = Env("VCL_ASSETS") ?? Path.GetFullPath("../../viewer"); // lesson files (svg, models) from disk
-            app.Scenery.Set(Env("VCL_SCENE") ?? "night"); // VCL_SCENE=aero|tech|demo: the surroundings
+            app.Scenery.Set(Env("VCL_SCENE") ?? "night"); // VCL_SCENE=aero|tech|demo|math|circuits|space|lakeside: the surroundings
             var spoken = app.Avatar.Voice.Prepare("Testing the voice.");
             Debug.Log($"[vcl] voice: {(spoken.HasValue ? $"{spoken.Value.dur:F2} s of speech" : "none: " + (app.Avatar.Voice.Error ?? "off"))}");
             // VCL_VRM=file.vrm: that avatar as the teacher.
@@ -358,6 +358,30 @@ namespace Vcl.EditorTools
                     }
                 }
                 Render(dir != null ? Path.Combine(dir, $"{name}-{++k}.png") : shot);
+            }
+            // VCL_YAWS=90,-90,180: the surroundings, turned that many degrees from the board (scenery animated 1 s in).
+            if (Env("VCL_YAWS") != null)
+            {
+                app.Scenery.Update(1);
+                if (Env("VCL_SCENEDBG") != null)
+                    foreach (var r in UnityEngine.Object.FindObjectsOfType<MeshRenderer>())
+                        if (r.transform.parent && r.transform.parent.name == "scenery") Debug.Log($"[vcl] scenery {r.name}: {r.bounds} on={r.enabled && r.gameObject.activeInHierarchy} q={r.sharedMaterial?.renderQueue}");
+                Debug.Log($"[vcl] camera {cam.transform.position} {cam.transform.eulerAngles}");
+                var home = cam.transform.rotation;
+                foreach (var yaw in Env("VCL_YAWS").Split(','))
+                {
+                    cam.transform.rotation = Quaternion.Euler(0, float.Parse(yaw), 0) * Quaternion.Euler(float.Parse(Env("VCL_PITCH") ?? "-4"), home.eulerAngles.y, 0);
+                    var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
+                    cam.targetTexture = rt;
+                    cam.Render();
+                    RenderTexture.active = rt;
+                    var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+                    tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                    tex.Apply();
+                    File.WriteAllBytes(Path.ChangeExtension(shot, null) + $"-yaw{yaw}.png", tex.EncodeToPNG());
+                    cam.targetTexture = null; RenderTexture.active = null; rt.Release();
+                }
+                cam.transform.rotation = home;
             }
             // VCL_MENU=1: the lesson menu over the last board, with sample entries.
             if (Env("VCL_MENU") != null && dir != null)

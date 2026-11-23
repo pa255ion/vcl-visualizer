@@ -117,9 +117,12 @@ The menu also has a **Voice** switch (robot voice or subtitles only) and a
   git-ignored, since avatars are usually licensed to you.
 * **Scene**: the surroundings, as in the browser: Night (the plain dark room),
   Aero (bright sky, glossy platform, hills, clouds, soap bubbles), Tech (glowing
-  grid, distant towers, rising motes) or Demo (synthwave sun, scrolling grid,
-  rotating vector shapes). Built from shaders and generated meshes
-  (`Resources/Vcl*.shader`, `Scenery.cs`).
+  grid, distant towers, rising motes), Demo (synthwave sun, scrolling grid,
+  rotating vector shapes), Math (graph paper, sunflower, symbols, solids, sine
+  horizon), Circuits (traces with pulses, chips, capacitors), Space (ringed
+  planet, nebulae, asteroids, meteors) or Lakeside (dock, water, pines,
+  fireflies, birds). Built from shaders and generated meshes
+  (`Resources/Vcl*.shader`, `Scenery.cs`, `SceneryWorlds.cs`).
 * **Music** and **Effects** volume bars (point along a bar and pull the
   trigger): generative music in the scene's key with a background bed, the
   music dipping under speech, and soft sounds as things are drawn.

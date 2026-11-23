@@ -205,6 +205,7 @@ namespace Vcl
             foreach (var name in Scenes)
             {
                 var n = name;
+                if (x + Mathf.Max(2.4f, n.Length * 0.34f + 1.0f) > right) { x = x0; y -= RowStep * 0.75f; } // wrap
                 x = Pill(x, y, Scenery.Label(n), Scene() == n, () => { SetScene(n); Rebuild(); });
             }
             y -= RowStep;

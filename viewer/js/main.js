@@ -7,7 +7,7 @@
 //   ?lesson=NAME                load lessons/NAME.vcl (or .md) and play it
 //   ?skip=1                     jump straight to the end state (screenshots)
 //   ?view=side                  desktop camera from the side (to see depth)
-//   ?scene=aero|tech|demo|night the surroundings (also the Scene menu)
+//   ?scene=night|aero|tech|demo|math|circuits|space|lakeside the surroundings (also the Scene menu)
 //
 // A published static copy (tools/publish.sh) has <html data-static>: it never
 // looks for a server and runs everything through the wasm parser.
@@ -797,4 +797,4 @@ renderer.setAnimationLoop(() => {
 });
 
 // Exposed for debugging from the console.
-Object.assign(window, { runtime, run, scene, camera, board, THREE, scenery, ambience });
+Object.assign(window, { runtime, run, scene, camera, controls, board, THREE, scenery, ambience });

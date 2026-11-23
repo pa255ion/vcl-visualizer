@@ -66,6 +66,13 @@ input[type="checkbox"] { accent-color: var(--accent); }
   repeating-linear-gradient(90deg, transparent 0 9px, #29d3ff55 9px 10px); background-blend-mode: screen; }
 .swatch.demo i { background: radial-gradient(circle at 70% 58%, #ffe066 0 16%, #ff2a8a 17% 19%, transparent 20%),
   linear-gradient(#000 0, #3a0a4a 40%, #ff2a6d 58%, #0d0220 60%); }
+.swatch.math i { background: radial-gradient(circle at 30% 45%, #ffcf6b 0 2px, transparent 3px), radial-gradient(circle at 62% 30%, #ffcf6b 0 1.5px, transparent 2.5px),
+  linear-gradient(#0d0b2a, #6a5797 58%, #141436 60%), repeating-linear-gradient(90deg, transparent 0 7px, #9db8ff44 7px 8px); background-blend-mode: normal, normal, screen; }
+.swatch.circuits i { background: linear-gradient(90deg, transparent 0 30%, #d39a4c 30% 34%, transparent 34% 62%, #d39a4c 62% 65%, transparent 65%) 0 60% / 100% 40% no-repeat,
+  linear-gradient(#010604, #123d2d 55%, #0c3d2c 57%); }
+.swatch.space i { background: radial-gradient(circle at 72% 40%, #e8c9a0 0 9px, transparent 10px), radial-gradient(ellipse at 72% 40%, transparent 0 11px, #d9c9a8aa 12px 14px, transparent 15px),
+  radial-gradient(circle at 20% 30%, #fff 0 1px, transparent 1.5px), radial-gradient(circle at 40% 70%, #fff 0 1px, transparent 1.5px), radial-gradient(ellipse at 30% 60%, #7a3cff55, transparent 60%), #000004; }
+.swatch.lakeside i { background: radial-gradient(circle at 35% 52%, #fff1c8 0 5px, transparent 7px), linear-gradient(#3e6fae, #ffc58f 52%, #53607c 54% 58%, #1d4258 60%, #ffc995aa 80%, #1d4258); }
 .slider { display: grid; grid-template-columns: 64px 1fr 36px; align-items: center; gap: 10px; margin: 6px 0; color: var(--fg); font-size: 13px; }
 .slider output { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; cursor: pointer;

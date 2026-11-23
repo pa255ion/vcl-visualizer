@@ -28,7 +28,7 @@ Shader "Vcl/Sprites"
             #include "UnityCG.cginc"
             sampler2D _MainTex;
             fixed4 _Color;
-            float _Disc, _Floor, _Ceil;
+            float _Disc, _Floor, _Ceil, _Src;
             struct appdata { float4 vertex : POSITION; float2 uv : TEXCOORD0; float2 uv2 : TEXCOORD1; float2 uv3 : TEXCOORD2; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_OUTPUT_STEREO };
             v2f vert (appdata v)
@@ -50,12 +50,16 @@ Shader "Vcl/Sprites"
             fixed4 frag (v2f i) : SV_Target
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+                // Additive (_Src = One): weight the colour by alpha, which additive blending ignores.
+                float pre = _Src < 1.5 ? 1 : 0;
                 if (_Disc > 0.5)
                 {
                     float a = smoothstep(0.5, 0.0, length(i.uv - 0.5));
-                    return fixed4(i.color.rgb * a * a, a * a * i.color.a);
+                    return fixed4(i.color.rgb * a * a * lerp(1, i.color.a, pre), a * a * i.color.a);
                 }
-                return tex2D(_MainTex, i.uv) * i.color;
+                fixed4 c = tex2D(_MainTex, i.uv) * i.color;
+                c.rgb *= lerp(1, c.a, pre);
+                return c;
             }
             ENDCG
         }

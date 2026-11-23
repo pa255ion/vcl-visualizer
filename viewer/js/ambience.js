@@ -5,7 +5,7 @@
 // The music dips while the teacher speaks.
 //
 //   const amb = new Ambience();
-//   amb.setScene('aero'); amb.setMusic(0..1); amb.setEffects(0..1);
+//   amb.setScene('aero');  (night, aero, tech, demo, math, circuits, space, lakeside) amb.setMusic(0..1); amb.setEffects(0..1);
 //   amb.draw(seconds)  amb.pop()  amb.fade()  amb.question()  amb.answer(correct)  amb.duck(seconds)
 
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -41,6 +41,41 @@ const THEMES = {
     arp: { type: 'square', every: 1, density: 1, gain: 0.022, cutoff: 3500, octave: 12, dur: 0.1, tracker: true },
     bass: { type: 'triangle', gain: 0.08 },
     bed: null,
+  },
+  math: {
+    // Minimalist: a steady broken-chord pattern over soft pads (Glass, Reich).
+    bpm: 72, music: 0.5,
+    chords: [[45, 52, 57, 59, 60, 64], [41, 48, 57, 60, 64, 67], [43, 52, 55, 60, 64, 67], [43, 50, 55, 59, 62, 64]], // Am(add9) Fmaj7 C/G G6
+    pad: { types: ['sine', 'triangle'], cutoff: 1500, gain: 0.03, attack: 2, release: 3 },
+    arp: { type: 'triangle', every: 2, density: 1, gain: 0.022, cutoff: 2600, octave: 12, dur: 0.16, release: 0.4, tracker: true },
+    bell: { density: 0.06, octave: 24, gain: 0.014, ratio: 3.0 },
+    bed: { kind: 'wind', gain: 0.012 },
+  },
+  circuits: {
+    // Clocked: a pulse on the beat, square blips like data on a bus, a low mains hum.
+    bpm: 96, music: 0.45,
+    chords: [[52, 59, 62, 66, 71], [48, 55, 59, 62, 67], [45, 52, 55, 59, 64], [47, 54, 57, 62, 66]], // Em9 Cmaj9 Am9 Bm7
+    pad: { types: ['sawtooth', 'triangle'], cutoff: 520, gain: 0.022, attack: 2, release: 3, lfo: 0.05 },
+    arp: { type: 'square', every: 1, density: 0.4, gain: 0.016, cutoff: 1500, octave: 24, dur: 0.05 },
+    pulse: { gain: 0.06 },
+    bass: { type: 'triangle', gain: 0.05 },
+    bed: { kind: 'hum', gain: 0.014 },
+  },
+  space: {
+    // Slow and wide: long Lydian pads, sparse glassy bells, a deep drone.
+    bpm: 50, music: 0.55,
+    chords: [[48, 55, 62, 64, 66, 71], [45, 52, 59, 60, 64, 71], [41, 48, 52, 57, 59, 64], [43, 50, 55, 57, 62, 69]], // Cmaj9#11 Am(add9) Fmaj7#11 Gsus2
+    pad: { types: ['sine', 'triangle', 'sine'], cutoff: 1300, gain: 0.04, attack: 4, release: 6, lfo: 0.03 },
+    bell: { density: 0.12, octave: 24, gain: 0.014, ratio: 1.41 },
+    bed: { kind: 'space', gain: 0.03 },
+  },
+  lakeside: {
+    // Warm and unhurried: plucked broken chords, a soft pad, lapping water and birds.
+    bpm: 68, music: 0.5,
+    chords: [[43, 50, 59, 62, 66], [40, 47, 55, 59, 62], [48, 55, 59, 64, 67], [50, 57, 62, 66, 69]], // Gmaj7 Em7 Cmaj7 D
+    pad: { types: ['triangle', 'sine'], cutoff: 1600, gain: 0.03, attack: 2, release: 3 },
+    arp: { type: 'triangle', every: 2, density: 0.55, gain: 0.03, cutoff: 2200, octave: 12, dur: 0.04, release: 0.9 },
+    bed: { kind: 'lake', gain: 0.022 },
   },
 };
 
@@ -182,7 +217,7 @@ export class Ambience {
       const a = th.arp;
       const idx = a.tracker ? step % ch.length : Math.floor(Math.random() * ch.length);
       const up = a.tracker ? (Math.floor(step / ch.length) % 2) * 12 : (Math.random() < 0.3 ? 12 : 0);
-      this.tone(t, ch[idx] + a.octave + up, { type: a.type, dur: a.dur, gain: a.gain, cutoff: a.cutoff, attack: 0.005, release: 0.08, dest: this.duckGain, delay: true });
+      this.tone(t, ch[idx] + a.octave + up, { type: a.type, dur: a.dur, gain: a.gain, cutoff: a.cutoff, attack: 0.005, release: a.release ?? 0.08, dest: this.duckGain, delay: true });
     }
     if (th.bell && pos % 2 === 0 && Math.random() < th.bell.density / 4) {
       const n = ch[1 + Math.floor(Math.random() * (ch.length - 1))] + th.bell.octave;
@@ -302,7 +337,7 @@ export class Ambience {
     src.stop(t + dur + 0.05);
   }
 
-  /** The background bed: wind, a stream with droplets, or a low hum. Returns {stop(at)}. */
+  /** The background bed: wind, a stream with droplets, a low hum, a deep drone (space) or lapping water with birds (lake). Returns {stop(at)}. */
   bed({ kind, gain }) {
     const ctx = this.ctx, t = ctx.currentTime;
     const out = ctx.createGain();
@@ -321,6 +356,25 @@ export class Ambience {
       l.connect(lg).connect(f.frequency); l.start(t); nodes.push(l);
     } else if (kind === 'water') {
       f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.6;
+    } else if (kind === 'space') {
+      // A deep, slowly breathing rumble, and a faint low fifth.
+      f.type = 'lowpass'; f.frequency.value = 120; f.Q.value = 2;
+      const l = ctx.createOscillator(), lg = ctx.createGain();
+      l.frequency.value = 0.03; lg.gain.value = 60;
+      l.connect(lg).connect(f.frequency); l.start(t); nodes.push(l);
+      for (const [fr, g] of [[36.7, 0.25], [55, 0.12]]) {
+        const o = ctx.createOscillator(), og = ctx.createGain();
+        o.frequency.value = fr; og.gain.value = g;
+        o.connect(og).connect(out); o.start(t); nodes.push(o);
+      }
+    } else if (kind === 'lake') {
+      // Low lapping: filtered noise swelling and ebbing.
+      f.type = 'lowpass'; f.frequency.value = 520; f.Q.value = 0.7;
+      const swell = ctx.createGain(); swell.gain.value = 0.65;
+      const l = ctx.createOscillator(), lg = ctx.createGain();
+      l.frequency.value = 0.16; lg.gain.value = 0.35;
+      l.connect(lg).connect(swell.gain); l.start(t); nodes.push(l);
+      src.connect(f).connect(swell).connect(out);
     } else {
       f.type = 'lowpass'; f.frequency.value = 180;
       for (const [fr, g] of [[55, 0.5], [110, 0.2], [165.5, 0.08]]) {
@@ -329,7 +383,7 @@ export class Ambience {
         o.connect(og).connect(out); o.start(t); nodes.push(o);
       }
     }
-    src.connect(f).connect(out);
+    if (kind !== 'lake') src.connect(f).connect(out);
     src.start(t);
     // Water: droplets now and then.
     let drops = null;
@@ -348,12 +402,33 @@ export class Ambience {
         o.start(at); o.stop(at + 0.1);
       }, 350);
     }
+    // Lake: a bird now and then, two to four quick chirps.
+    let birds = null;
+    if (kind === 'lake') {
+      birds = setInterval(() => {
+        if (ctx.state !== 'running' || Math.random() > 0.3) return;
+        let at = ctx.currentTime + Math.random() * 0.5;
+        const f0 = 2600 + Math.random() * 1800, n = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < n; i++, at += 0.09 + Math.random() * 0.06) {
+          const o = ctx.createOscillator(), e = ctx.createGain(), f1 = f0 * (0.9 + Math.random() * 0.25);
+          o.frequency.setValueAtTime(f1, at);
+          o.frequency.exponentialRampToValueAtTime(f1 * 1.35, at + 0.04);
+          o.frequency.exponentialRampToValueAtTime(f1 * 0.95, at + 0.07);
+          e.gain.setValueAtTime(0, at);
+          e.gain.linearRampToValueAtTime(gain * 0.5, at + 0.01);
+          e.gain.exponentialRampToValueAtTime(0.0001, at + 0.08);
+          o.connect(e).connect(out);
+          o.start(at); o.stop(at + 0.09);
+        }
+      }, 2500);
+    }
     return {
       stop: (at) => {
         out.gain.cancelScheduledValues(ctx.currentTime);
         out.gain.setTargetAtTime(0, ctx.currentTime, 0.5);
         for (const n of nodes) n.stop(at);
         if (drops) clearInterval(drops);
+        if (birds) clearInterval(birds);
       },
     };
   }

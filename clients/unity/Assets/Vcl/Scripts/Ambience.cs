@@ -26,7 +26,7 @@ namespace Vcl
             public int[][] Chords;
             public Wave[] PadWaves; public float PadCutoff, PadGain, PadAttack, PadRelease, PadLfo;
             public bool Bell; public float BellDensity, BellGain, BellRatio; public int BellOctave;
-            public bool Arp; public Wave ArpWave; public float ArpDensity, ArpGain, ArpCutoff, ArpDur; public int ArpOctave; public bool Tracker;
+            public bool Arp; public Wave ArpWave; public float ArpDensity, ArpGain, ArpCutoff, ArpDur, ArpRelease = 0.08f; public int ArpOctave, ArpEvery = 1; public bool Tracker;
             public float Pulse; // kick gain (0: none)
             public float Bass;  // bass gain (0: none)
             public string Bed; public float BedGain;
@@ -65,6 +65,39 @@ namespace Vcl
                 PadWaves = new[] { Wave.Square }, PadCutoff = 900, PadGain = 0.012f, PadAttack = 1, PadRelease = 2,
                 Arp = true, ArpWave = Wave.Square, ArpDensity = 1, ArpGain = 0.022f, ArpCutoff = 3500, ArpOctave = 12, ArpDur = 0.1f, Tracker = true,
                 Bass = 0.08f,
+            },
+            ["math"] = new Theme
+            {
+                Bpm = 72, Music = 0.5f,
+                Chords = new[] { new[] { 45, 52, 57, 59, 60, 64 }, new[] { 41, 48, 57, 60, 64, 67 }, new[] { 43, 52, 55, 60, 64, 67 }, new[] { 43, 50, 55, 59, 62, 64 } },
+                PadWaves = new[] { Wave.Sine, Wave.Triangle }, PadCutoff = 1500, PadGain = 0.03f, PadAttack = 2, PadRelease = 3,
+                Arp = true, ArpWave = Wave.Triangle, ArpEvery = 2, ArpDensity = 1, ArpGain = 0.022f, ArpCutoff = 2600, ArpOctave = 12, ArpDur = 0.16f, ArpRelease = 0.4f, Tracker = true,
+                Bell = true, BellDensity = 0.06f, BellOctave = 24, BellGain = 0.014f, BellRatio = 3f,
+                Bed = "wind", BedGain = 0.012f,
+            },
+            ["circuits"] = new Theme
+            {
+                Bpm = 96, Music = 0.45f,
+                Chords = new[] { new[] { 52, 59, 62, 66, 71 }, new[] { 48, 55, 59, 62, 67 }, new[] { 45, 52, 55, 59, 64 }, new[] { 47, 54, 57, 62, 66 } },
+                PadWaves = new[] { Wave.Saw, Wave.Triangle }, PadCutoff = 520, PadGain = 0.022f, PadAttack = 2, PadRelease = 3, PadLfo = 0.05f,
+                Arp = true, ArpWave = Wave.Square, ArpDensity = 0.4f, ArpGain = 0.016f, ArpCutoff = 1500, ArpOctave = 24, ArpDur = 0.05f,
+                Pulse = 0.06f, Bass = 0.05f, Bed = "hum", BedGain = 0.014f,
+            },
+            ["space"] = new Theme
+            {
+                Bpm = 50, Music = 0.55f,
+                Chords = new[] { new[] { 48, 55, 62, 64, 66, 71 }, new[] { 45, 52, 59, 60, 64, 71 }, new[] { 41, 48, 52, 57, 59, 64 }, new[] { 43, 50, 55, 57, 62, 69 } },
+                PadWaves = new[] { Wave.Sine, Wave.Triangle, Wave.Sine }, PadCutoff = 1300, PadGain = 0.04f, PadAttack = 4, PadRelease = 6, PadLfo = 0.03f,
+                Bell = true, BellDensity = 0.12f, BellOctave = 24, BellGain = 0.014f, BellRatio = 1.41f,
+                Bed = "space", BedGain = 0.03f,
+            },
+            ["lakeside"] = new Theme
+            {
+                Bpm = 68, Music = 0.5f,
+                Chords = new[] { new[] { 43, 50, 59, 62, 66 }, new[] { 40, 47, 55, 59, 62 }, new[] { 48, 55, 59, 64, 67 }, new[] { 50, 57, 62, 66, 69 } },
+                PadWaves = new[] { Wave.Triangle, Wave.Sine }, PadCutoff = 1600, PadGain = 0.03f, PadAttack = 2, PadRelease = 3,
+                Arp = true, ArpWave = Wave.Triangle, ArpEvery = 2, ArpDensity = 0.55f, ArpGain = 0.03f, ArpCutoff = 2200, ArpOctave = 12, ArpDur = 0.04f, ArpRelease = 0.9f,
+                Bed = "lake", BedGain = 0.022f,
             },
         };
 
@@ -193,11 +226,11 @@ namespace Vcl
             if (!MusicOn) return;
             var ch = th.Chords[chord];
             int pos = st % perChord;
-            if (th.Arp && R() < th.ArpDensity)
+            if (th.Arp && pos % th.ArpEvery == 0 && R() < th.ArpDensity)
             {
                 int idx = th.Tracker ? st % ch.Length : rnd.Next(ch.Length);
                 int up = th.Tracker ? (st / ch.Length % 2) * 12 : (R() < 0.3f ? 12 : 0);
-                voices.Add(new Tone(this, ch[idx] + th.ArpOctave + up, th.ArpWave, th.ArpDur, th.ArpGain, th.ArpCutoff, 0.005f, 0.08f, Bus.Music) { Delay = true });
+                voices.Add(new Tone(this, ch[idx] + th.ArpOctave + up, th.ArpWave, th.ArpDur, th.ArpGain, th.ArpCutoff, 0.005f, th.ArpRelease, Bus.Music) { Delay = true });
             }
             if (th.Bell && pos % 2 == 0 && R() < th.BellDensity / 4)
                 BellVoice(ch[1 + rnd.Next(ch.Length - 1)] + th.BellOctave, th.BellGain, th.BellRatio, Bus.Music);
@@ -413,14 +446,15 @@ namespace Vcl
             }
         }
 
-        /// <summary>The background: wind, a stream with droplets, or a low hum. Fades in, and out when released.</summary>
+        /// <summary>The background: wind, a stream with droplets, a low hum, a deep drone (space) or lapping water with birds (lake). Fades in, and out when released.</summary>
         class BedVoice : Voice
         {
             readonly string kind; readonly float gain; Svf f; float brown; double p1, p2, p3; int n; double releaseAt = double.MaxValue;
             public BedVoice(Ambience a, string kind, float gain) : base(a, Bus.Bed)
             {
                 this.kind = kind; this.gain = gain;
-                if (kind == "wind") f.Set(420, 1.5f, a.rate); else if (kind == "water") f.Set(1400, 0.6f, a.rate); else f.Set(180, 0.7f, a.rate);
+                if (kind == "wind") f.Set(420, 1.5f, a.rate); else if (kind == "water") f.Set(1400, 0.6f, a.rate);
+                else if (kind == "space") f.Set(120, 2, a.rate); else if (kind == "lake") f.Set(520, 0.7f, a.rate); else f.Set(180, 0.7f, a.rate);
             }
             public override void ReleaseAt(double t) { if (t < releaseAt) releaseAt = t; }
             protected override float Sample(double dt)
@@ -444,6 +478,30 @@ namespace Vcl
                         if (a.R() < 0.5f) a.voices.Add(new Droplet(a, 900 + a.R() * 1400, gain * 1.2f));
                     }
                 }
+                else if (kind == "space")
+                {
+                    // A deep, slowly breathing rumble, and a faint low fifth.
+                    if ((n++ & 63) == 0) f.Set(120 + 60 * Mathf.Sin((float)(a.time * 0.03 * 2 * Math.PI)), 2, a.rate);
+                    s = f.Low(nz);
+                    p1 += 36.7 * dt; p2 += 55 * dt;
+                    s += Mathf.Sin((float)(p1 % 1 * 2 * Math.PI)) * 0.25f + Mathf.Sin((float)(p2 % 1 * 2 * Math.PI)) * 0.12f;
+                }
+                else if (kind == "lake")
+                {
+                    // Low lapping, swelling and ebbing; a bird now and then.
+                    s = f.Low(nz) * (0.65f + 0.35f * Mathf.Sin((float)(a.time * 0.16 * 2 * Math.PI)));
+                    if (a.time >= a.nextDrop)
+                    {
+                        a.nextDrop = a.time + 2.5;
+                        if (a.R() < 0.3f)
+                        {
+                            float f0 = 2600 + a.R() * 1800; double at = a.time + a.R() * 0.5;
+                            int count = 2 + a.rnd.Next(3);
+                            for (int i = 0; i < count; i++, at += 0.09 + a.R() * 0.06)
+                                a.voices.Add(new Chirp(a, f0 * (0.9f + a.R() * 0.25f), gain * 0.5f) { StartAt = at });
+                        }
+                    }
+                }
                 else
                 {
                     s = f.Low(nz);
@@ -453,6 +511,22 @@ namespace Vcl
                 float env = Mathf.Min(1, (float)age / 3);
                 if (a.time > releaseAt) { env *= Mathf.Exp(-(float)(a.time - releaseAt) / 0.5f); if (a.time - releaseAt > 3) Done = true; }
                 return s * env * gain;
+            }
+        }
+
+        /// <summary>A bird's chirp: a quick rise and fall in pitch.</summary>
+        class Chirp : Voice
+        {
+            readonly float f1, gain; double ph;
+            public Chirp(Ambience a, float f1, float gain) : base(a, Bus.Bed) { this.f1 = f1; this.gain = gain; }
+            protected override float Sample(double dt)
+            {
+                float t = (float)age;
+                float fr = t < 0.04f ? f1 * Mathf.Pow(1.35f, t / 0.04f) : f1 * 1.35f * Mathf.Pow(0.95f / 1.35f, Mathf.Clamp01((t - 0.04f) / 0.03f));
+                ph += fr * dt; if (ph >= 1) ph -= 1;
+                if (t > 0.09f) Done = true;
+                float env = t < 0.01f ? t / 0.01f : Mathf.Exp(-(t - 0.01f) / 0.012f);
+                return Mathf.Sin((float)(ph * 2 * Math.PI)) * env * gain;
             }
         }
 

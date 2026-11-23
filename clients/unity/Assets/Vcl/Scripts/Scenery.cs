@@ -8,15 +8,16 @@
 //   aero   bright sky, glossy platform, green hills, clouds and soap bubbles
 //   tech   deep blue night, glowing floor grid, distant towers, rising data
 //   demo   demoscene / synthwave: striped sun, stars, scrolling grid, vector shapes
+//   math, circuits, space, lakeside: see SceneryWorlds.cs
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace Vcl
 {
-    public class Scenery
+    public partial class Scenery
     {
-        public static readonly string[] Names = { "night", "aero", "tech", "demo" };
+        public static readonly string[] Names = { "night", "aero", "tech", "demo", "math", "circuits", "space", "lakeside" };
         public static string Label(string n) => n.Length == 0 ? n : char.ToUpper(n[0]) + n.Substring(1);
 
         readonly Transform parent;
@@ -84,7 +85,11 @@ namespace Vcl
             if (plainFloor) plainFloor.SetActive(name == "night");
             if (name == "night") return;
 
-            Look look = name == "aero" ? BuildAero() : name == "tech" ? BuildTech() : BuildDemo();
+            Look look = name switch
+            {
+                "aero" => BuildAero(), "tech" => BuildTech(), "math" => BuildMath(), "circuits" => BuildCircuits(),
+                "space" => BuildSpace(), "lakeside" => BuildLakeside(), _ => BuildDemo(),
+            };
             var sky = Obj("sky", Draw.Primitive(PrimitiveType.Sphere), look.Sky);
             sky.transform.localScale = Vector3.one * 220;
             cam.backgroundColor = look.Fog;

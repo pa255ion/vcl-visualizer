@@ -55,7 +55,12 @@ Open http://127.0.0.1:8080, click **Editor**, pick a lesson (or **Open…** a `.
 
 The gear button opens the settings: the **Scene** (Night, the plain dark room;
 Aero, bright sky, glossy platform, hills, clouds and soap bubbles; Tech, glowing
-grid and distant towers; Demo, synthwave sun, scrolling grid, vector shapes),
+grid and distant towers; Demo, synthwave sun, scrolling grid, vector shapes;
+Math, graph paper at dusk with a golden-angle sunflower, drifting symbols and a
+sine-wave horizon; Circuits, a circuit board whose copper traces carry pulses
+out to chips and capacitors; Space, a deck among the stars with a ringed planet,
+nebulae, asteroids and meteors; Lakeside, golden hour on a wooden dock with
+pines, mountains, fireflies and birds),
 **Music** and **Effects** volume sliders, the teacher's voice and step mode. Each
 scene has its own generative music and background sound, and things being drawn
 make soft sounds in the music's key; the music dips while the teacher speaks.
